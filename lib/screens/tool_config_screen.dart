@@ -924,6 +924,9 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
     final station = weatherFlow.selectedStation;
     final sensorDevices = station?.sensorDevices ?? [];
 
+    // Display options
+    final use24HourFormat = _customProperties['use24HourFormat'] as bool? ?? false;
+
     // Current device source selections
     final tempSource = _customProperties['tempSource'] as String? ?? 'auto';
     final humiditySource = _customProperties['humiditySource'] as String? ?? 'auto';
@@ -966,6 +969,51 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Time Format Option
+            Text(
+              'Display Options',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Time Format',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment<bool>(
+                      value: false,
+                      label: Text('12h'),
+                      icon: Icon(Icons.schedule, size: 16),
+                    ),
+                    ButtonSegment<bool>(
+                      value: true,
+                      label: Text('24h'),
+                      icon: Icon(Icons.access_time, size: 16),
+                    ),
+                  ],
+                  selected: {use24HourFormat},
+                  onSelectionChanged: (selected) {
+                    setState(() => _customProperties['use24HourFormat'] = selected.first);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              use24HourFormat ? 'Using 24-hour (military) format: 14:30' : 'Using 12-hour format: 2:30 PM',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 16),
+
             Text(
               'Device Sources',
               style: Theme.of(context).textTheme.titleMedium,

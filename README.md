@@ -16,6 +16,12 @@ A customizable Flutter weather dashboard for WeatherFlow Tempest personal weathe
 - **Separate portrait/landscape layouts** - optimize for any orientation
 - **Full-screen mode** with auto-hiding controls
 
+### Multi-Station Support
+- **Multiple weather stations** - Switch between stations seamlessly
+- **Station-scoped device settings** - Device source preferences saved per-station
+- **Automatic config switching** - Tools remember your settings for each station
+- **Per-field data sources** - Choose which device provides each measurement type
+
 ### Weather Tools
 | Tool | Description |
 |------|-------------|
@@ -122,12 +128,16 @@ Provider-based architecture with service dependencies:
 
 ```
 StorageService (Hive persistence)
-    ↓
-ToolService ←── ToolRegistry (singleton)
-    ↓
-DashboardService
-
-WeatherFlowService (REST + WebSocket + UDP)
+    │
+    ├── ToolService ←── ToolRegistry (singleton)
+    │       │
+    │       └── Station-scoped configs (device sources per station)
+    │
+    ├── DashboardService (layouts, screens, placements)
+    │
+    └── WeatherFlowService (REST + WebSocket + UDP)
+            │
+            └── Per-device observations (keyed by serial number)
 ```
 
 ### Data Flow
@@ -208,9 +218,22 @@ ToolRegistry.instance.register(
 
 Each tool supports:
 - **Data sources** - Which observation fields to display
+- **Device sources** - Select specific devices per measurement (per-station)
 - **Colors** - Background, text, accent colors
 - **Units** - Override default unit preferences
 - **Min/Max values** - For gauges and scales
+
+### Data Source Indicators
+
+Tools display colored dots to show where data is coming from:
+
+| Color | Source | Description |
+|-------|--------|-------------|
+| Green | UDP | Local network (fastest, 1-minute updates) |
+| Blue | Cloud | REST API or WebSocket |
+| Gray | Forecast | Predicted data from forecast |
+
+Each measurement (temperature, wind, pressure, etc.) tracks its source independently, so you can see exactly which device is providing each value.
 
 ---
 
@@ -233,6 +256,7 @@ All data is stored locally using Hive:
 - Encrypted token storage
 - Cached stations and observations
 - Dashboard layouts and tool configurations
+- Station-scoped device source preferences
 
 ---
 
@@ -283,10 +307,13 @@ flutter build windows
 
 ---
 
-## Related Projects
+## Documentation
 
-- **[ZedDisplay](../zennora/signalk/ZedDisplay)** - Main app architecture reference
-- **[ZedDisplay Wear](../zennora/signalk/zeddisplay_wear)** - WearOS companion app
+- **[Architecture Guide](.claude/ARCHITECTURE.md)** - Detailed technical documentation for developers
+  - Tool/widget system architecture
+  - Data models and service layer
+  - Creating custom tools
+  - Station-scoped configuration system
 
 ---
 

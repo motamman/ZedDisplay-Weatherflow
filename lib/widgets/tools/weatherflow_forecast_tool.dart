@@ -65,6 +65,7 @@ class WeatherFlowForecastToolBuilder implements ToolBuilder {
           'daysToShow': 7,
           'showCurrentConditions': true,
           'showSunMoonArc': true,
+          'use24HourFormat': false, // false = 12-hour AM/PM, true = 24-hour military
           // Device source preferences ('auto' or device serial number)
           // Measurement types: temp, humidity, pressure, wind, light, rain, lightning
           'tempSource': 'auto',
@@ -460,6 +461,7 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
     final daysToShow = customProps['daysToShow'] as int? ?? 7;
     final showCurrentConditions = customProps['showCurrentConditions'] as bool? ?? true;
     final showSunMoonArc = customProps['showSunMoonArc'] as bool? ?? true;
+    final use24HourFormat = customProps['use24HourFormat'] as bool? ?? false;
 
     // Get the ConversionService from WeatherFlowService - respects user preferences
     final conversions = widget.weatherFlowService.conversions;
@@ -565,6 +567,7 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
           showCurrentConditions: showCurrentConditions,
           sunMoonTimes: _sunMoonTimes,
           showSunMoonArc: showSunMoonArc,
+          use24HourFormat: use24HourFormat,
         ),
         // Refresh button in top right corner (hidden in edit mode so dashboard controls are visible)
         if (!widget.isEditMode)

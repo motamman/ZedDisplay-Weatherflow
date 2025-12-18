@@ -94,6 +94,9 @@ class WeatherFlowForecast extends StatefulWidget {
   /// Show sun/moon arc
   final bool showSunMoonArc;
 
+  /// Use 24-hour (military) time format instead of 12-hour AM/PM
+  final bool use24HourFormat;
+
   const WeatherFlowForecast({
     super.key,
     this.currentTemp,
@@ -121,6 +124,7 @@ class WeatherFlowForecast extends StatefulWidget {
     this.showCurrentConditions = true,
     this.sunMoonTimes,
     this.showSunMoonArc = true,
+    this.use24HourFormat = false,
   });
 
   @override
@@ -128,6 +132,30 @@ class WeatherFlowForecast extends StatefulWidget {
 }
 
 class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
+  /// Format time based on use24HourFormat setting
+  String _formatTime(DateTime time, {bool includeMinutes = true}) {
+    final hour = time.hour;
+    final minute = time.minute;
+
+    if (widget.use24HourFormat) {
+      // 24-hour format: 14:30 or 14:00
+      if (includeMinutes) {
+        return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+      } else {
+        return '${hour.toString().padLeft(2, '0')}:00';
+      }
+    } else {
+      // 12-hour format: 2:30 PM or 2 PM
+      final ampm = hour < 12 ? 'AM' : 'PM';
+      final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+      if (includeMinutes && minute != 0) {
+        return '$displayHour:${minute.toString().padLeft(2, '0')} $ampm';
+      } else {
+        return '$displayHour $ampm';
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -150,7 +178,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
 
                 // Sun/Moon arc (beneath header, above current conditions)
                 if (widget.showSunMoonArc && widget.sunMoonTimes != null) ...[
-                  _SunMoonArc(times: widget.sunMoonTimes!, isDark: isDark),
+                  _SunMoonArc(times: widget.sunMoonTimes!, isDark: isDark, use24HourFormat: widget.use24HourFormat),
                   const SizedBox(height: 8),
                 ],
 
@@ -471,7 +499,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
       child: Column(
         children: [
           Text(
-            '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+            _formatTime(time),
             style: TextStyle(
               fontSize: 9,
               fontWeight: FontWeight.w600,
@@ -515,7 +543,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
       child: Column(
         children: [
           Text(
-            '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+            _formatTime(time),
             style: TextStyle(
               fontSize: 9,
               fontWeight: FontWeight.w600,
@@ -626,7 +654,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
                         Icon(Icons.wb_sunny, size: 9, color: Colors.amber.shade400),
                         const SizedBox(width: 2),
                         Text(
-                          '${forecast.sunrise!.toLocal().hour.toString().padLeft(2, '0')}:${forecast.sunrise!.toLocal().minute.toString().padLeft(2, '0')}',
+                          _formatTime(forecast.sunrise!.toLocal()),
                           style: TextStyle(fontSize: 9, color: isDark ? Colors.white38 : Colors.black38),
                         ),
                       ],
@@ -636,7 +664,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
                         Icon(Icons.nights_stay, size: 9, color: Colors.indigo.shade300),
                         const SizedBox(width: 2),
                         Text(
-                          '${forecast.sunset!.toLocal().hour.toString().padLeft(2, '0')}:${forecast.sunset!.toLocal().minute.toString().padLeft(2, '0')}',
+                          _formatTime(forecast.sunset!.toLocal()),
                           style: TextStyle(fontSize: 9, color: isDark ? Colors.white38 : Colors.black38),
                         ),
                       ],
@@ -715,11 +743,12 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
     final isToday = forecastTime.day == now.day && forecastTime.month == now.month;
     final dayAbbrevs = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     final dayAbbrev = dayAbbrevs[forecastTime.weekday - 1];
+    final timeStr = _formatTime(forecastTime, includeMinutes: false);
     final hourLabel = forecast.hour == 0
         ? 'Now'
         : isToday
-            ? '${forecastTime.hour.toString().padLeft(2, '0')}:00'
-            : '$dayAbbrev ${forecastTime.hour.toString().padLeft(2, '0')}:00';
+            ? timeStr
+            : '$dayAbbrev $timeStr';
 
     return Container(
       width: 58,
@@ -843,8 +872,9 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
 class _SunMoonArc extends StatelessWidget {
   final SunMoonTimes times;
   final bool isDark;
+  final bool use24HourFormat;
 
-  const _SunMoonArc({required this.times, required this.isDark});
+  const _SunMoonArc({required this.times, required this.isDark, this.use24HourFormat = false});
 
   @override
   Widget build(BuildContext context) {
@@ -860,6 +890,7 @@ class _SunMoonArc extends StatelessWidget {
               times: times,
               now: now,
               isDark: isDark,
+              use24HourFormat: use24HourFormat,
             ),
             child: _buildIconsOverlay(constraints, now),
           );
@@ -1147,12 +1178,36 @@ class _SunMoonArcPainter extends CustomPainter {
   final SunMoonTimes times;
   final DateTime now;
   final bool isDark;
+  final bool use24HourFormat;
 
   _SunMoonArcPainter({
     required this.times,
     required this.now,
     required this.isDark,
+    this.use24HourFormat = false,
   });
+
+  /// Format time based on use24HourFormat setting
+  String _formatTime(DateTime time, {bool includeMinutes = true}) {
+    final hour = time.hour;
+    final minute = time.minute;
+
+    if (use24HourFormat) {
+      if (includeMinutes) {
+        return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+      } else {
+        return '${hour.toString().padLeft(2, '0')}:00';
+      }
+    } else {
+      final ampm = hour < 12 ? 'AM' : 'PM';
+      final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+      if (includeMinutes && minute != 0) {
+        return '$displayHour:${minute.toString().padLeft(2, '0')} $ampm';
+      } else {
+        return '$displayHour $ampm';
+      }
+    }
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1272,14 +1327,14 @@ class _SunMoonArcPainter extends CustomPainter {
     // Show actual times instead of relative offsets
     final startTime = arcStart.toLocal();
     final endTime = arcStart.add(const Duration(hours: 24)).toLocal();
-    drawLabel(0.0, '${startTime.hour.toString().padLeft(2, '0')}:00', neutralColor);
-    drawLabel(1.0, '${endTime.hour.toString().padLeft(2, '0')}:00', neutralColor);
+    drawLabel(0.0, _formatTime(startTime, includeMinutes: false), neutralColor);
+    drawLabel(1.0, _formatTime(endTime, includeMinutes: false), neutralColor);
 
     if (times.sunrise != null) {
       final progress = times.sunrise!.difference(arcStart).inMinutes / 1440.0;
       if (progress >= 0 && progress <= 1) {
         final local = times.sunrise!.toLocal();
-        drawLabel(progress, '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}', Colors.amber);
+        drawLabel(progress, _formatTime(local), Colors.amber);
       }
     }
 
@@ -1287,14 +1342,15 @@ class _SunMoonArcPainter extends CustomPainter {
       final progress = times.sunset!.difference(arcStart).inMinutes / 1440.0;
       if (progress >= 0 && progress <= 1) {
         final local = times.sunset!.toLocal();
-        drawLabel(progress, '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}', Colors.deepOrange);
+        drawLabel(progress, _formatTime(local), Colors.deepOrange);
       }
     }
   }
 
   @override
   bool shouldRepaint(covariant _SunMoonArcPainter oldDelegate) {
-    return oldDelegate.now.minute != now.minute;
+    return oldDelegate.now.minute != now.minute ||
+           oldDelegate.use24HourFormat != use24HourFormat;
   }
 }
 
