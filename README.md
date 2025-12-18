@@ -16,6 +16,11 @@ A customizable Flutter weather dashboard for WeatherFlow Tempest personal weathe
 - **Separate portrait/landscape layouts** - optimize for any orientation
 - **Full-screen mode** with auto-hiding controls
 
+### Customizable/Dynamic Widgets
+- **Forecast spinner** Unique visualization of hourly forecasts
+- **Daily forecast and station observations** - Shows station observations, plus daily forecasts and today's sun and moon cycle. 
+- **NWS Alerts for station and device** - Also feeds alerts on spinner  
+
 ### Multi-Station Support
 - **Multiple weather stations** - Switch between stations seamlessly
 - **Station-scoped device settings** - Device source preferences saved per-station
