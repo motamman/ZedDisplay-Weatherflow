@@ -67,19 +67,11 @@ class _SplashScreenState extends State<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // App icon
-            Container(
-              width: 120,
-              height: 120,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Icon(
-                Icons.cloud,
-                size: 64,
-                color: Theme.of(context).colorScheme.primary,
-              ),
+            // App icon - same as native splash for consistency
+            Image.asset(
+              'assets/app_icons/icon_crop_1024.png',
+              width: 200,
+              height: 200,
             ),
             const SizedBox(height: 24),
             Text(
@@ -90,7 +82,7 @@ class _SplashScreenState extends State<SplashScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'WeatherFlow',
+              '+Weatherflow',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     color: Theme.of(context).colorScheme.primary,
                   ),

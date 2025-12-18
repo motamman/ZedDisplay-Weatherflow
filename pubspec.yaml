@@ -54,3 +54,4 @@ flutter:
 
   assets:
     - assets/weather_icons/bas_weather/production/fill/all/
+    - assets/app_icons/

@@ -230,8 +230,9 @@ Tools display colored dots to show where data is coming from:
 | Color | Source | Description |
 |-------|--------|-------------|
 | Green | UDP | Local network (fastest, 1-minute updates) |
-| Blue | Cloud | REST API or WebSocket |
-| Gray | Forecast | Predicted data from forecast |
+| Blue | Live | REST API or WebSocket cloud data |
+| Orange | Forecast | Predicted data from forecast |
+| Grey | None | No data available |
 
 Each measurement (temperature, wind, pressure, etc.) tracks its source independently, so you can see exactly which device is providing each value.
 
@@ -304,6 +305,46 @@ flutter build linux
 # Windows
 flutter build windows
 ```
+
+---
+
+## Roadmap
+
+### In Progress
+- **Spinner Enhancements**
+  - Tap alert badge to open alert details
+  - Daily forecast display with toggle
+  - Highlight daily forecast as spinner moves through days
+
+- **Forecast Widget Enhancements**
+  - Click day to show 24hr arc for that day
+  - Expand hourly forecast below clicked day
+
+### Planned
+- **History Charts Tool**
+  - Time-series charts for wind, temperature, pressure, etc.
+  - Configurable time ranges (1h, 6h, 24h, 7d)
+
+- **Simple Endpoint Tools**
+  - Collection of single-value display widgets
+  - Temperature, humidity, pressure, wind, UV, solar, rain, lightning
+
+- **Text Display Tool**
+  - Generic display for any data endpoint
+  - Configurable label, units, and formatting
+
+- **Notifications**
+  - Snackbar notifications for in-app alerts
+  - System notifications for severe weather
+  - Configurable severity thresholds
+
+- **WebView Settings Integration**
+  - Access tempestwx.com device/account settings from app
+
+- **Sun/Moon Tool**
+  - Rise/set times and moon phase display
+
+See [.claude/CLAUDE.md](.claude/CLAUDE.md) for detailed development tasks.
 
 ---
 
