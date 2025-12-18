@@ -432,6 +432,8 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
         return _buildWindSettings();
       case 'weatherflow_forecast':
         return _buildForecastSettings();
+      case 'weather_alerts':
+        return _buildWeatherAlertsSettings();
       default:
         return const SizedBox.shrink();
     }
@@ -637,6 +639,228 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildWeatherAlertsSettings() {
+    // Current settings
+    final compact = _customProperties['compact'] as bool? ?? false;
+    final locationSource = _customProperties['locationSource'] as String? ?? 'both';
+    final refreshInterval = _customProperties['refreshInterval'] as int? ?? 5;
+    final showDescription = _customProperties['showDescription'] as bool? ?? true;
+    final showInstruction = _customProperties['showInstruction'] as bool? ?? true;
+    final showAreaDesc = _customProperties['showAreaDesc'] as bool? ?? false;
+    final showSenderName = _customProperties['showSenderName'] as bool? ?? false;
+    final showTimeRange = _customProperties['showTimeRange'] as bool? ?? true;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Weather Alerts Settings',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Displays NWS weather alerts for your location',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+
+            // Location Source
+            Text(
+              'Location Source',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
+                helperText: 'Where to check for alerts',
+              ),
+              value: locationSource,
+              items: const [
+                DropdownMenuItem(
+                  value: 'phone',
+                  child: Text('Phone Location (GPS)'),
+                ),
+                DropdownMenuItem(
+                  value: 'station',
+                  child: Text('Station Location'),
+                ),
+                DropdownMenuItem(
+                  value: 'both',
+                  child: Text('Both (deduplicated)'),
+                ),
+              ],
+              onChanged: (value) {
+                setState(() => _customProperties['locationSource'] = value);
+              },
+            ),
+
+            const SizedBox(height: 16),
+
+            // Refresh Interval
+            DropdownButtonFormField<int>(
+              decoration: const InputDecoration(
+                labelText: 'Refresh Interval',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              value: refreshInterval,
+              items: const [
+                DropdownMenuItem(value: 1, child: Text('1 minute')),
+                DropdownMenuItem(value: 5, child: Text('5 minutes')),
+                DropdownMenuItem(value: 10, child: Text('10 minutes')),
+                DropdownMenuItem(value: 15, child: Text('15 minutes')),
+                DropdownMenuItem(value: 30, child: Text('30 minutes')),
+              ],
+              onChanged: (value) {
+                setState(() => _customProperties['refreshInterval'] = value);
+              },
+            ),
+
+            const Divider(height: 24),
+
+            // Display Options
+            Text(
+              'Display Options',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+
+            SwitchListTile(
+              title: const Text('Compact Mode'),
+              subtitle: const Text('Show condensed view with tap to expand'),
+              value: compact,
+              onChanged: (value) {
+                setState(() => _customProperties['compact'] = value);
+              },
+            ),
+
+            const Divider(height: 16),
+
+            // Component visibility
+            Text(
+              'Show Components',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+
+            SwitchListTile(
+              title: const Text('Time Range'),
+              subtitle: const Text('Show onset and end times'),
+              value: showTimeRange,
+              onChanged: (value) {
+                setState(() => _customProperties['showTimeRange'] = value);
+              },
+            ),
+
+            SwitchListTile(
+              title: const Text('Description'),
+              subtitle: const Text('Full alert description text'),
+              value: showDescription,
+              onChanged: (value) {
+                setState(() => _customProperties['showDescription'] = value);
+              },
+            ),
+
+            SwitchListTile(
+              title: const Text('Instructions'),
+              subtitle: const Text('Safety instructions from NWS'),
+              value: showInstruction,
+              onChanged: (value) {
+                setState(() => _customProperties['showInstruction'] = value);
+              },
+            ),
+
+            SwitchListTile(
+              title: const Text('Affected Areas'),
+              subtitle: const Text('List of counties/regions'),
+              value: showAreaDesc,
+              onChanged: (value) {
+                setState(() => _customProperties['showAreaDesc'] = value);
+              },
+            ),
+
+            SwitchListTile(
+              title: const Text('Source'),
+              subtitle: const Text('NWS office name'),
+              value: showSenderName,
+              onChanged: (value) {
+                setState(() => _customProperties['showSenderName'] = value);
+              },
+            ),
+
+            const Divider(height: 16),
+
+            // Severity legend
+            Text(
+              'Alert Severity Levels',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+
+            _buildSeverityLegend(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSeverityLegend() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            _severityRow('Extreme', Colors.purple.shade700, 'Tornado, Hurricane'),
+            _severityRow('Severe', Colors.red.shade700, 'Severe Thunderstorm, Blizzard'),
+            _severityRow('Moderate', Colors.orange.shade700, 'Winter Storm, Wind Advisory'),
+            _severityRow('Minor', Colors.yellow.shade700, 'Frost, Freeze'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _severityRow(String level, Color color, String examples) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 70,
+            child: Text(
+              level,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: color,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              examples,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ),
+        ],
       ),
     );
   }

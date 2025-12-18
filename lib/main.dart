@@ -12,6 +12,7 @@ import 'widgets/tools/current_conditions_tool.dart';
 import 'widgets/tools/wind_tool.dart';
 import 'widgets/tools/weather_api_spinner_tool.dart';
 import 'widgets/tools/weatherflow_forecast_tool.dart';
+import 'widgets/tools/weather_alerts_tool.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -70,6 +71,7 @@ void _registerTools(ToolRegistry registry) {
   registry.register('wind', WindToolBuilder());
   registry.register('weather_api_spinner', WeatherApiSpinnerToolBuilder());
   registry.register('weatherflow_forecast', WeatherFlowForecastToolBuilder());
+  registry.register('weather_alerts', WeatherAlertsToolBuilder());
   // Add more tools here as they are created:
   // registry.register('lightning', LightningToolBuilder());
   // registry.register('rain', RainToolBuilder());

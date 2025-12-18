@@ -33,6 +33,9 @@ dependencies:
   math_expressions: ^2.6.0
   collection: ^1.18.0
 
+  # Location
+  geolocator: ^13.0.2
+
   # Shared core library
   weatherflow_core:
     path: packages/weatherflow_core
