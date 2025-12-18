@@ -10,6 +10,7 @@ import '../models/tool_config.dart';
 import '../models/tool_definition.dart';
 import '../services/tool_service.dart';
 import '../services/tool_registry.dart';
+import '../services/storage_service.dart';
 import '../services/weatherflow_service.dart';
 
 /// Screen for configuring a tool's appearance and settings
@@ -45,16 +46,48 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
     _loadTool();
   }
 
+  /// Device source property keys that should be stored per-station
+  static const _deviceSourceKeys = [
+    'tempSource', 'humiditySource', 'pressureSource',
+    'windSource', 'lightSource', 'rainSource', 'lightningSource',
+  ];
+
   void _loadTool() {
     final tool = widget.tool;
     _name = tool.name;
     _primaryColor = tool.config.style.primaryColor;
-    _showLabel = tool.config.style.showLabel ?? true;
-    _showValue = tool.config.style.showValue ?? true;
-    _showUnit = tool.config.style.showUnit ?? true;
+    _showLabel = tool.config.style.showLabel;
+    _showValue = tool.config.style.showValue;
+    _showUnit = tool.config.style.showUnit;
     _toolWidth = widget.currentWidth ?? tool.defaultWidth;
     _toolHeight = widget.currentHeight ?? tool.defaultHeight;
+
+    // Start with base custom properties
     _customProperties = Map<String, dynamic>.from(tool.config.style.customProperties ?? {});
+
+    // Merge in station-specific device source overrides
+    final weatherFlow = context.read<WeatherFlowService>();
+    final storage = context.read<StorageService>();
+    final stationId = weatherFlow.selectedStation?.stationId;
+
+    if (stationId != null) {
+      final stationOverrides = storage.getToolConfigForStation(stationId, tool.id);
+      if (stationOverrides != null) {
+        // Only merge device source keys
+        for (final key in _deviceSourceKeys) {
+          if (stationOverrides.containsKey(key)) {
+            _customProperties[key] = stationOverrides[key];
+          }
+        }
+      } else {
+        // No station-specific config - reset device sources to 'auto'
+        for (final key in _deviceSourceKeys) {
+          if (_customProperties.containsKey(key)) {
+            _customProperties[key] = 'auto';
+          }
+        }
+      }
+    }
   }
 
   Future<void> _selectColor() async {
@@ -109,7 +142,28 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
 
   Future<void> _saveTool() async {
     final toolService = context.read<ToolService>();
+    final storage = context.read<StorageService>();
+    final weatherFlow = context.read<WeatherFlowService>();
+    final stationId = weatherFlow.selectedStation?.stationId;
 
+    // Separate device source properties from other custom properties
+    final deviceSources = <String, dynamic>{};
+    final otherCustomProps = <String, dynamic>{};
+
+    for (final entry in _customProperties.entries) {
+      if (_deviceSourceKeys.contains(entry.key)) {
+        deviceSources[entry.key] = entry.value;
+      } else {
+        otherCustomProps[entry.key] = entry.value;
+      }
+    }
+
+    // Save device sources to station-specific storage
+    if (stationId != null && deviceSources.isNotEmpty) {
+      await storage.setToolConfigForStation(stationId, widget.tool.id, deviceSources);
+    }
+
+    // Save other custom properties to the base tool config (without device sources)
     final updatedStyle = StyleConfig(
       minValue: widget.tool.config.style.minValue,
       maxValue: widget.tool.config.style.maxValue,
@@ -119,7 +173,7 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
       showLabel: _showLabel,
       showValue: _showValue,
       showUnit: _showUnit,
-      customProperties: _customProperties,
+      customProperties: otherCustomProps.isNotEmpty ? otherCustomProps : null,
     );
 
     final updatedConfig = ToolConfig(

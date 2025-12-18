@@ -364,6 +364,71 @@ class StorageService extends ChangeNotifier {
     await _dashboardsBox.delete(key);
   }
 
+  // ============ Station-Scoped Tool Configs ============
+
+  /// Storage key for station-specific tool configs
+  String _stationToolConfigKey(int stationId) => 'tool_configs_$stationId';
+
+  /// Get all tool config overrides for a station
+  /// Returns a map of toolId -> customProperties overrides
+  Map<String, Map<String, dynamic>> getStationToolConfigs(int stationId) {
+    final json = _dashboardsBox.get(_stationToolConfigKey(stationId));
+    if (json == null) return {};
+    try {
+      final map = jsonDecode(json) as Map<String, dynamic>;
+      return map.map((key, value) => MapEntry(
+        key,
+        (value as Map<String, dynamic>?) ?? {},
+      ));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Get config override for a specific tool on a station
+  /// Returns customProperties map or null if no override
+  Map<String, dynamic>? getToolConfigForStation(int stationId, String toolId) {
+    final configs = getStationToolConfigs(stationId);
+    return configs[toolId];
+  }
+
+  /// Set config override for a specific tool on a station
+  /// Only stores customProperties (device sources, etc.)
+  Future<void> setToolConfigForStation(
+    int stationId,
+    String toolId,
+    Map<String, dynamic> customProperties,
+  ) async {
+    final configs = getStationToolConfigs(stationId);
+    configs[toolId] = customProperties;
+    await _dashboardsBox.put(
+      _stationToolConfigKey(stationId),
+      jsonEncode(configs),
+    );
+    notifyListeners();
+  }
+
+  /// Clear config override for a specific tool on a station
+  Future<void> clearToolConfigForStation(int stationId, String toolId) async {
+    final configs = getStationToolConfigs(stationId);
+    configs.remove(toolId);
+    if (configs.isEmpty) {
+      await _dashboardsBox.delete(_stationToolConfigKey(stationId));
+    } else {
+      await _dashboardsBox.put(
+        _stationToolConfigKey(stationId),
+        jsonEncode(configs),
+      );
+    }
+    notifyListeners();
+  }
+
+  /// Clear all tool config overrides for a station
+  Future<void> clearStationToolConfigs(int stationId) async {
+    await _dashboardsBox.delete(_stationToolConfigKey(stationId));
+    notifyListeners();
+  }
+
   // ============ Clear Data ============
 
   /// Clear stations cache only

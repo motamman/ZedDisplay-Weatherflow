@@ -63,6 +63,58 @@ class ToolService extends ChangeNotifier {
     return _tools[toolId];
   }
 
+  /// Get effective config for a tool, merging base config with station-specific overrides
+  ///
+  /// This resolves the issue where device serial numbers in customProperties
+  /// are station-specific but tools are stored globally.
+  ///
+  /// [toolId] - The tool ID to get config for
+  /// [stationId] - Optional station ID; if null, returns base config
+  ///
+  /// Returns the tool's config with station-specific customProperties merged in
+  ToolConfig? getEffectiveConfig(String toolId, int? stationId) {
+    final tool = getTool(toolId);
+    if (tool == null) return null;
+
+    // If no station specified, return base config
+    if (stationId == null) return tool.config;
+
+    // Check for station-specific overrides
+    final stationOverrides = _storageService.getToolConfigForStation(stationId, toolId);
+    if (stationOverrides == null || stationOverrides.isEmpty) {
+      // No station override - return base config with device sources reset to 'auto'
+      // This ensures we don't use another station's device serial numbers
+      final baseCustomProps = tool.config.style.customProperties ?? {};
+      final resetProps = Map<String, dynamic>.from(baseCustomProps);
+
+      // Reset device source properties to 'auto'
+      const deviceSourceKeys = [
+        'tempSource', 'humiditySource', 'pressureSource',
+        'windSource', 'lightSource', 'rainSource', 'lightningSource'
+      ];
+      for (final key in deviceSourceKeys) {
+        if (resetProps.containsKey(key)) {
+          resetProps[key] = 'auto';
+        }
+      }
+
+      return tool.config.copyWith(
+        style: tool.config.style.copyWith(customProperties: resetProps),
+      );
+    }
+
+    // Merge base config with station-specific overrides
+    final baseCustomProps = tool.config.style.customProperties ?? {};
+    final mergedProps = <String, dynamic>{
+      ...baseCustomProps,
+      ...stationOverrides,
+    };
+
+    return tool.config.copyWith(
+      style: tool.config.style.copyWith(customProperties: mergedProps),
+    );
+  }
+
   /// Create a new tool from a definition
   Future<Tool> createTool({
     required String name,

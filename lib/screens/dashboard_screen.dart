@@ -692,12 +692,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final cellWidth = screenWidth / 8;
         final cellHeight = screenHeight / 8;
 
+        // Get station ID for effective config lookup
+        final stationId = weatherFlow.selectedStation?.stationId;
+
         Widget contentWidget = placements.isEmpty
             ? emptyScreenWidget
             : Stack(
           children: placements.map((placement) {
             final tool = toolService.getTool(placement.toolId);
             if (tool == null) return const SizedBox.shrink();
+
+            // Get effective config with station-specific device sources
+            final effectiveConfig = toolService.getEffectiveConfig(tool.id, stationId) ?? tool.config;
 
             // Calculate position
             final isBeingMoved = _movingWidgetId == placement.toolId;
@@ -727,7 +733,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     // Tool widget
                     Padding(
                       padding: const EdgeInsets.all(8),
-                      child: toolRegistry.buildTool(tool.toolTypeId, tool.config, weatherFlow, isEditMode: true),
+                      child: toolRegistry.buildTool(tool.toolTypeId, effectiveConfig, weatherFlow, isEditMode: true),
                     ),
 
                     // Drag-to-move handle at top-left
@@ -882,7 +888,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               // Normal mode
               widgetContent = Padding(
                 padding: const EdgeInsets.all(8),
-                child: toolRegistry.buildTool(tool.toolTypeId, tool.config, weatherFlow),
+                child: toolRegistry.buildTool(tool.toolTypeId, effectiveConfig, weatherFlow),
               );
             }
 
