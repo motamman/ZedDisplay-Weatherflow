@@ -349,19 +349,8 @@ flutter build windows
 - **Sun/Moon Tool**
   - Rise/set times and moon phase display
 
-See [.claude/CLAUDE.md](.claude/CLAUDE.md) for detailed development tasks.
-
----
 
 ## Documentation
-
-- **[Architecture Guide](.claude/ARCHITECTURE.md)** - Detailed technical documentation for developers
-  - Tool/widget system architecture
-  - Data models and service layer
-  - Creating custom tools
-  - Station-scoped configuration system
-
----
 
 ## Resources
 
