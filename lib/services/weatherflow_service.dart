@@ -119,19 +119,57 @@ class WeatherFlowService extends ChangeNotifier {
     String? rainSource,
     String? lightningSource,
   }) {
+    final result = getMergedObservationWithSources(
+      tempSource: tempSource,
+      humiditySource: humiditySource,
+      pressureSource: pressureSource,
+      windSource: windSource,
+      lightSource: lightSource,
+      rainSource: rainSource,
+      lightningSource: lightningSource,
+    );
+    return result?.observation;
+  }
+
+  /// Get merged observation with per-field source tracking
+  /// Returns null if no observations available
+  ({
+    Observation observation,
+    ObservationSource tempSource,
+    ObservationSource humiditySource,
+    ObservationSource pressureSource,
+    ObservationSource windSource,
+    ObservationSource lightSource,
+    ObservationSource rainSource,
+    ObservationSource lightningSource,
+  })? getMergedObservationWithSources({
+    String? tempSource,
+    String? humiditySource,
+    String? pressureSource,
+    String? windSource,
+    String? lightSource,
+    String? rainSource,
+    String? lightningSource,
+  }) {
     if (_deviceObservations.isEmpty && _currentObservation == null) return null;
 
-    // Helper to get value from specified source or auto-select
-    T? getValue<T>(String? source, T? Function(Observation) getter) {
+    // Helper to get value from specified source or auto-select, tracking the source
+    (T?, ObservationSource?) getValueWithSource<T>(String? source, T? Function(Observation) getter) {
       if (source != null && source != 'auto' && _deviceObservations.containsKey(source)) {
-        return getter(_deviceObservations[source]!);
+        final obs = _deviceObservations[source]!;
+        final value = getter(obs);
+        return (value, value != null ? obs.source : null);
       }
       // Auto: try all device observations, then current observation
       for (final obs in _deviceObservations.values) {
         final value = getter(obs);
-        if (value != null) return value;
+        if (value != null) return (value, obs.source);
       }
-      return _currentObservation != null ? getter(_currentObservation!) : null;
+      if (_currentObservation != null) {
+        final value = getter(_currentObservation!);
+        return (value, value != null ? _currentObservation!.source : null);
+      }
+      return (null, null);
     }
 
     // Determine best source for observation metadata
@@ -140,39 +178,64 @@ class WeatherFlowService extends ChangeNotifier {
         : _currentObservation;
     if (bestObs == null) return null;
 
-    return Observation(
+    // Get values with source tracking
+    final (temp, tempSrc) = getValueWithSource(tempSource, (o) => o.temperature);
+    final (humidity, humiditySrc) = getValueWithSource(humiditySource, (o) => o.humidity);
+    final (stationPressure, pressureSrc) = getValueWithSource(pressureSource, (o) => o.stationPressure);
+    final (seaLevelPressure, _) = getValueWithSource(pressureSource, (o) => o.seaLevelPressure);
+    final (windAvg, windSrc) = getValueWithSource(windSource, (o) => o.windAvg);
+    final (windGust, _) = getValueWithSource(windSource, (o) => o.windGust);
+    final (windLull, _) = getValueWithSource(windSource, (o) => o.windLull);
+    final (windDirection, _) = getValueWithSource(windSource, (o) => o.windDirection);
+    final (illuminance, lightSrc) = getValueWithSource(lightSource, (o) => o.illuminance);
+    final (uvIndex, _) = getValueWithSource(lightSource, (o) => o.uvIndex);
+    final (solarRadiation, _) = getValueWithSource(lightSource, (o) => o.solarRadiation);
+    final (rainAccumulated, rainSrc) = getValueWithSource(rainSource, (o) => o.rainAccumulated);
+    final (rainRate, _) = getValueWithSource(rainSource, (o) => o.rainRate);
+    final (lightningDistance, lightningSrc) = getValueWithSource(lightningSource, (o) => o.lightningDistance);
+    final (lightningCount, _) = getValueWithSource(lightningSource, (o) => o.lightningCount);
+    final (feelsLike, _) = getValueWithSource(tempSource, (o) => o.feelsLike);
+    final (dewPoint, _) = getValueWithSource(tempSource, (o) => o.dewPoint);
+    final (heatIndex, _) = getValueWithSource(tempSource, (o) => o.heatIndex);
+    final (windChill, _) = getValueWithSource(tempSource, (o) => o.windChill);
+
+    final observation = Observation(
       timestamp: bestObs.timestamp,
       deviceId: bestObs.deviceId,
       source: bestObs.source,
-      // Temperature from specified source
-      temperature: getValue(tempSource, (o) => o.temperature),
-      humidity: getValue(humiditySource, (o) => o.humidity),
-      stationPressure: getValue(pressureSource, (o) => o.stationPressure),
-      seaLevelPressure: getValue(pressureSource, (o) => o.seaLevelPressure),
-      // Wind from specified source
-      windAvg: getValue(windSource, (o) => o.windAvg),
-      windGust: getValue(windSource, (o) => o.windGust),
-      windLull: getValue(windSource, (o) => o.windLull),
-      windDirection: getValue(windSource, (o) => o.windDirection),
-      // Light from specified source
-      illuminance: getValue(lightSource, (o) => o.illuminance),
-      uvIndex: getValue(lightSource, (o) => o.uvIndex),
-      solarRadiation: getValue(lightSource, (o) => o.solarRadiation),
-      // Rain from specified source
-      rainAccumulated: getValue(rainSource, (o) => o.rainAccumulated),
-      rainRate: getValue(rainSource, (o) => o.rainRate),
+      temperature: temp,
+      humidity: humidity,
+      stationPressure: stationPressure,
+      seaLevelPressure: seaLevelPressure,
+      windAvg: windAvg,
+      windGust: windGust,
+      windLull: windLull,
+      windDirection: windDirection,
+      illuminance: illuminance,
+      uvIndex: uvIndex,
+      solarRadiation: solarRadiation,
+      rainAccumulated: rainAccumulated,
+      rainRate: rainRate,
       precipType: bestObs.precipType,
-      // Lightning from specified source
-      lightningDistance: getValue(lightningSource, (o) => o.lightningDistance),
-      lightningCount: getValue(lightningSource, (o) => o.lightningCount),
-      // Battery from best observation
+      lightningDistance: lightningDistance,
+      lightningCount: lightningCount,
       batteryVoltage: bestObs.batteryVoltage,
       reportInterval: bestObs.reportInterval,
-      // Calculated values
-      feelsLike: getValue(tempSource, (o) => o.feelsLike),
-      dewPoint: getValue(tempSource, (o) => o.dewPoint),
-      heatIndex: getValue(tempSource, (o) => o.heatIndex),
-      windChill: getValue(tempSource, (o) => o.windChill),
+      feelsLike: feelsLike,
+      dewPoint: dewPoint,
+      heatIndex: heatIndex,
+      windChill: windChill,
+    );
+
+    return (
+      observation: observation,
+      tempSource: tempSrc ?? bestObs.source,
+      humiditySource: humiditySrc ?? bestObs.source,
+      pressureSource: pressureSrc ?? bestObs.source,
+      windSource: windSrc ?? bestObs.source,
+      lightSource: lightSrc ?? bestObs.source,
+      rainSource: rainSrc ?? bestObs.source,
+      lightningSource: lightningSrc ?? bestObs.source,
     );
   }
 

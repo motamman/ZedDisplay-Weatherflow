@@ -251,9 +251,9 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
       final rainSource = customProps['rainSource'] as String? ?? 'auto';
       final lightningSource = customProps['lightningSource'] as String? ?? 'auto';
 
-      // Get merged observation using configured device sources
+      // Get merged observation with per-field source tracking
       // This merges data from multiple devices (Air, Sky, Tempest) based on preferences
-      final observation = widget.weatherFlowService.getMergedObservation(
+      final mergedResult = widget.weatherFlowService.getMergedObservationWithSources(
         tempSource: tempSource,
         humiditySource: humiditySource,
         pressureSource: pressureSource,
@@ -261,11 +261,13 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
         lightSource: lightSource,
         rainSource: rainSource,
         lightningSource: lightningSource,
-      ) ?? widget.weatherFlowService.currentObservation;
+      );
 
-      if (observation != null) {
-        // Determine observation source from the observation itself
-        final obsSource = switch (observation.source) {
+      final observation = mergedResult?.observation ?? widget.weatherFlowService.currentObservation;
+
+      if (observation != null && mergedResult != null) {
+        // Helper to convert ObservationSource to ConditionDataSource
+        ConditionDataSource toConditionSource(ObservationSource src) => switch (src) {
           ObservationSource.udp => ConditionDataSource.udp,
           ObservationSource.websocket => ConditionDataSource.observation,
           ObservationSource.rest => ConditionDataSource.observation,
@@ -273,25 +275,56 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
 
         if (observation.temperature != null) {
           _currentTemp = observation.temperature; // Already in Kelvin
-          _tempSource = obsSource;
+          _tempSource = toConditionSource(mergedResult.tempSource);
         }
         if (observation.humidity != null) {
           _currentHumidity = observation.humidity; // ratio 0-1
-          _humiditySource = obsSource;
+          _humiditySource = toConditionSource(mergedResult.humiditySource);
         }
         if (observation.seaLevelPressure != null || observation.stationPressure != null) {
           _currentPressure = observation.seaLevelPressure ?? observation.stationPressure; // Pascals
-          _pressureSource = obsSource;
+          _pressureSource = toConditionSource(mergedResult.pressureSource);
         }
         if (observation.windAvg != null) {
           _currentWindSpeed = observation.windAvg; // m/s
           _currentWindGust = observation.windGust; // m/s
           _currentWindDirection = observation.windDirection;
-          _windSource = obsSource;
+          _windSource = toConditionSource(mergedResult.windSource);
         }
         if (observation.rainRate != null || observation.rainAccumulated != null) {
           _rainLastHour = observation.rainRate; // meters
           _rainToday = observation.rainAccumulated; // meters
+          _rainSource = toConditionSource(mergedResult.rainSource);
+        }
+      } else if (observation != null) {
+        // Fallback: use the observation's single source for all fields
+        final obsSource = switch (observation.source) {
+          ObservationSource.udp => ConditionDataSource.udp,
+          ObservationSource.websocket => ConditionDataSource.observation,
+          ObservationSource.rest => ConditionDataSource.observation,
+        };
+
+        if (observation.temperature != null) {
+          _currentTemp = observation.temperature;
+          _tempSource = obsSource;
+        }
+        if (observation.humidity != null) {
+          _currentHumidity = observation.humidity;
+          _humiditySource = obsSource;
+        }
+        if (observation.seaLevelPressure != null || observation.stationPressure != null) {
+          _currentPressure = observation.seaLevelPressure ?? observation.stationPressure;
+          _pressureSource = obsSource;
+        }
+        if (observation.windAvg != null) {
+          _currentWindSpeed = observation.windAvg;
+          _currentWindGust = observation.windGust;
+          _currentWindDirection = observation.windDirection;
+          _windSource = obsSource;
+        }
+        if (observation.rainRate != null || observation.rainAccumulated != null) {
+          _rainLastHour = observation.rainRate;
+          _rainToday = observation.rainAccumulated;
           _rainSource = obsSource;
         }
       }
