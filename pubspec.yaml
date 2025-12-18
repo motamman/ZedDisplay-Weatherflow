@@ -1,7 +1,7 @@
 name: zeddisplay_weatherflow
 description: "WeatherFlow Tempest weather display app with direct API integration"
 publish_to: 'none'
-version: 1.0.0+1
+version: 0.1.0+1
 
 environment:
   sdk: ^3.10.4
