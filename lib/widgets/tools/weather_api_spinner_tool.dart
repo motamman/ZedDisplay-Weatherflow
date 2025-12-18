@@ -8,6 +8,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../../models/tool_config.dart';
 import '../../models/tool_definition.dart';
 import '../../services/tool_registry.dart';
+import '../../services/storage_service.dart';
 import '../../services/weatherflow_service.dart';
 import '../../services/nws_alert_service.dart';
 import '../../utils/sun_calc.dart';
@@ -29,7 +30,7 @@ class WeatherApiSpinnerToolBuilder implements ToolBuilder {
         allowsMultiplePaths: false,
         minPaths: 0,
         maxPaths: 0,
-        styleOptions: ['showAnimation', 'tempUnit', 'windUnit'],
+        styleOptions: ['showAnimation'],
       ),
       defaultWidth: 3,
       defaultHeight: 3,
@@ -42,22 +43,18 @@ class WeatherApiSpinnerToolBuilder implements ToolBuilder {
       config: config,
       weatherFlowService: weatherFlowService,
       isEditMode: isEditMode,
+      name: name,
     );
   }
 
   @override
   ToolConfig? getDefaultConfig() {
     return const ToolConfig(
-      dataSources: [
-        DataSource(path: 'forecast', label: 'Forecast'),
-      ],
+      dataSources: [],
       style: StyleConfig(
-        showLabel: true,
-        showValue: true,
         customProperties: {
+          'showTitle': true,
           'showAnimation': true,
-          'tempUnit': 'F',
-          'windUnit': 'mph',
           'forecastDays': 3, // 1-10 days of forecast (default 3 = 72 hours)
         },
       ),
@@ -70,12 +67,14 @@ class WeatherApiSpinnerTool extends StatefulWidget {
   final ToolConfig config;
   final WeatherFlowService weatherFlowService;
   final bool isEditMode;
+  final String? name;
 
   const WeatherApiSpinnerTool({
     super.key,
     required this.config,
     required this.weatherFlowService,
     this.isEditMode = false,
+    this.name,
   });
 
   @override
@@ -317,9 +316,19 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
   @override
   Widget build(BuildContext context) {
     final customProps = widget.config.style.customProperties ?? {};
+    final showTitle = customProps['showTitle'] as bool? ?? true;
     final showAnimation = customProps['showAnimation'] as bool? ?? true;
-    final tempUnit = customProps['tempUnit'] as String? ?? 'F';
-    final windUnit = customProps['windUnit'] as String? ?? 'mph';
+
+    // Get global unit preferences from StorageService
+    final storage = context.watch<StorageService>();
+    final unitPrefs = storage.unitPreferences;
+    final tempUnit = unitPrefs.temperature; // '°C' or '°F'
+    final windUnit = unitPrefs.windSpeed; // 'kn', 'm/s', 'mph', 'km/h'
+
+    // Use tool name if showTitle enabled, otherwise default provider name
+    final displayName = showTitle && widget.name != null && widget.name!.isNotEmpty
+        ? widget.name!
+        : 'WeatherFlow';
 
     if (_isLoading) {
       return const Center(
@@ -379,14 +388,29 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
       );
     }
 
-    // Convert temperatures for display
+    // Convert temperatures for display (data is stored in Celsius)
     double? convertTemp(double? celsius) {
       if (celsius == null) return null;
-      if (tempUnit == 'F') return celsius * 9 / 5 + 32;
-      return celsius;
+      if (tempUnit == '°F') return celsius * 9 / 5 + 32;
+      return celsius; // Already Celsius
     }
 
-    // Convert hourly forecast temperatures
+    // Convert wind speed for display (data is stored in m/s)
+    double? convertWind(double? metersPerSecond) {
+      if (metersPerSecond == null) return null;
+      switch (windUnit) {
+        case 'kn':
+          return metersPerSecond * 1.94384; // m/s to knots
+        case 'mph':
+          return metersPerSecond * 2.23694; // m/s to mph
+        case 'km/h':
+          return metersPerSecond * 3.6; // m/s to km/h
+        default:
+          return metersPerSecond; // m/s
+      }
+    }
+
+    // Convert hourly forecast values to display units
     final convertedHourly = _hourlyForecasts.map((h) => HourlyForecast(
       hour: h.hour,
       temperature: convertTemp(h.temperature),
@@ -397,7 +421,7 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
       precipProbability: h.precipProbability,
       humidity: h.humidity,
       pressure: h.pressure,
-      windSpeed: h.windSpeed,
+      windSpeed: convertWind(h.windSpeed),
       windDirection: h.windDirection,
     )).toList();
 
@@ -422,11 +446,11 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
         ForecastSpinner(
           hourlyForecasts: convertedHourly,
           sunMoonTimes: _sunMoonTimes,
-          tempUnit: tempUnit == 'C' ? '°C' : '°F',
-          windUnit: windUnit,
-          pressureUnit: 'hPa',
+          tempUnit: tempUnit, // Already formatted: '°C' or '°F'
+          windUnit: windUnit, // Already formatted: 'kn', 'm/s', 'mph', 'km/h'
+          pressureUnit: unitPrefs.pressure, // 'hPa', 'mbar', 'inHg', etc.
           primaryColor: _getPrimaryColor(context),
-          providerName: 'WeatherFlow',
+          providerName: showTitle ? displayName : null,
           showWeatherAnimation: showAnimation,
         ),
         // Alert badge on top (muted styling, tappable)

@@ -65,12 +65,14 @@ class WeatherAlertsTool extends StatefulWidget {
   final ToolConfig config;
   final WeatherFlowService weatherFlowService;
   final bool isEditMode;
+  final String? name;
 
   const WeatherAlertsTool({
     super.key,
     required this.config,
     required this.weatherFlowService,
     this.isEditMode = false,
+    this.name,
   });
 
   @override
@@ -174,12 +176,18 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
 
     final activeAlerts = alertService.activeAlerts;
     final props = widget.config.style.customProperties ?? {};
+    final showTitle = props['showTitle'] as bool? ?? true;
     final showCompact = props['compact'] as bool? ?? false;
     final showDescription = props['showDescription'] as bool? ?? true;
     final showInstruction = props['showInstruction'] as bool? ?? true;
     final showAreaDesc = props['showAreaDesc'] as bool? ?? false;
     final showSenderName = props['showSenderName'] as bool? ?? false;
     final showTimeRange = props['showTimeRange'] as bool? ?? true;
+
+    // Title to display
+    final displayTitle = widget.name?.isNotEmpty == true
+        ? widget.name!
+        : 'Weather Alerts';
 
     if (!_isInitialized || alertService.isLoading) {
       return Center(
@@ -231,21 +239,59 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
     }
 
     if (activeAlerts.isEmpty) {
-      return _buildNoAlerts(isDark);
+      return _wrapWithTitle(showTitle, displayTitle, isDark, _buildNoAlerts(isDark));
     }
 
     if (showCompact) {
-      return _buildCompactView(activeAlerts, isDark);
+      return _wrapWithTitle(showTitle, displayTitle, isDark, _buildCompactView(activeAlerts, isDark));
     }
 
-    return _buildFullView(
-      activeAlerts,
+    return _wrapWithTitle(
+      showTitle,
+      displayTitle,
       isDark,
-      showTimeRange: showTimeRange,
-      showDescription: showDescription,
-      showInstruction: showInstruction,
-      showAreaDesc: showAreaDesc,
-      showSenderName: showSenderName,
+      _buildFullView(
+        activeAlerts,
+        isDark,
+        showTimeRange: showTimeRange,
+        showDescription: showDescription,
+        showInstruction: showInstruction,
+        showAreaDesc: showAreaDesc,
+        showSenderName: showSenderName,
+      ),
+    );
+  }
+
+  /// Wrap content with optional title header
+  Widget _wrapWithTitle(bool showTitle, String title, bool isDark, Widget content) {
+    if (!showTitle) return content;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Row(
+            children: [
+              Icon(
+                PhosphorIcons.warning(),
+                size: 18,
+                color: isDark ? Colors.white70 : Colors.black54,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: content),
+      ],
     );
   }
 
@@ -780,6 +826,7 @@ class WeatherAlertsToolBuilder extends ToolBuilder {
       dataSources: [],
       style: StyleConfig(
         customProperties: {
+          'showTitle': true,
           'compact': false,
           'locationSource': 'both',
           'refreshInterval': 5,
@@ -804,6 +851,7 @@ class WeatherAlertsToolBuilder extends ToolBuilder {
       config: config,
       weatherFlowService: weatherFlowService,
       isEditMode: isEditMode,
+      name: name,
     );
   }
 }

@@ -354,76 +354,6 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
           _buildToolSpecificSettings(definition),
           const SizedBox(height: 16),
 
-          // Size Configuration
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Default Size',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Width (columns)'),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              children: [1, 2, 3, 4, 5, 6, 7, 8].map((width) {
-                                return ChoiceChip(
-                                  label: Text('$width'),
-                                  selected: _toolWidth == width,
-                                  onSelected: (_) => setState(() => _toolWidth = width),
-                                );
-                              }).toList(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Height (rows)'),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              children: [1, 2, 3, 4, 5, 6, 7, 8].map((height) {
-                                return ChoiceChip(
-                                  label: Text('$height'),
-                                  selected: _toolHeight == height,
-                                  onSelected: (_) => setState(() => _toolHeight = height),
-                                );
-                              }).toList(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Size: $_toolWidth × $_toolHeight cells',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
           // Preview
           Card(
             child: Padding(
@@ -482,6 +412,7 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
     return const [
       'weatherflow_forecast',
       'weather_alerts',
+      'weather_api_spinner',
     ].contains(toolTypeId);
   }
 
@@ -506,8 +437,7 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
   }
 
   Widget _buildSpinnerSettings() {
-    final tempUnit = _customProperties['tempUnit'] as String? ?? 'F';
-    final windUnit = _customProperties['windUnit'] as String? ?? 'mph';
+    final showTitle = _customProperties['showTitle'] as bool? ?? true;
     final showAnimation = _customProperties['showAnimation'] as bool? ?? true;
     final forecastDays = _customProperties['forecastDays'] as int? ?? 3;
 
@@ -521,7 +451,17 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
               'Forecast Spinner Settings',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              title: const Text('Show Title'),
+              subtitle: Text('Display "${_name}" in the spinner'),
+              secondary: const Icon(Icons.title_outlined),
+              value: showTitle,
+              onChanged: (value) {
+                setState(() => _customProperties['showTitle'] = value);
+              },
+            ),
+            const SizedBox(height: 8),
             DropdownButtonFormField<int>(
               decoration: const InputDecoration(
                 labelText: 'Forecast Length',
@@ -543,42 +483,6 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
                 });
               },
             ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(
-                labelText: 'Temperature Unit',
-                border: OutlineInputBorder(),
-              ),
-              value: tempUnit,
-              items: const [
-                DropdownMenuItem(value: 'F', child: Text('Fahrenheit (°F)')),
-                DropdownMenuItem(value: 'C', child: Text('Celsius (°C)')),
-              ],
-              onChanged: (value) {
-                setState(() {
-                  _customProperties['tempUnit'] = value;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(
-                labelText: 'Wind Unit',
-                border: OutlineInputBorder(),
-              ),
-              value: windUnit,
-              items: const [
-                DropdownMenuItem(value: 'mph', child: Text('Miles per hour (mph)')),
-                DropdownMenuItem(value: 'kn', child: Text('Knots (kn)')),
-                DropdownMenuItem(value: 'm/s', child: Text('Meters per second (m/s)')),
-                DropdownMenuItem(value: 'km/h', child: Text('Kilometers per hour (km/h)')),
-              ],
-              onChanged: (value) {
-                setState(() {
-                  _customProperties['windUnit'] = value;
-                });
-              },
-            ),
             const SizedBox(height: 8),
             SwitchListTile(
               title: const Text('Show Weather Animation'),
@@ -588,6 +492,15 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
                   _customProperties['showAnimation'] = value;
                 });
               },
+            ),
+            const Divider(height: 24),
+            // Note about units
+            Text(
+              'Units are configured globally in Settings',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontStyle: FontStyle.italic,
+              ),
             ),
           ],
         ),
@@ -711,6 +624,7 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
 
   Widget _buildWeatherAlertsSettings() {
     // Current settings
+    final showTitle = _customProperties['showTitle'] as bool? ?? true;
     final compact = _customProperties['compact'] as bool? ?? false;
     final locationSource = _customProperties['locationSource'] as String? ?? 'both';
     final refreshInterval = _customProperties['refreshInterval'] as int? ?? 5;
@@ -731,11 +645,17 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            Text(
-              'Displays NWS weather alerts for your location',
-              style: Theme.of(context).textTheme.bodySmall,
+            SwitchListTile(
+              title: const Text('Show Title'),
+              subtitle: Text('Display "${_name}" as header'),
+              secondary: const Icon(Icons.title_outlined),
+              value: showTitle,
+              onChanged: (value) {
+                setState(() => _customProperties['showTitle'] = value);
+              },
             ),
-            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 8),
 
             // Location Source
             Text(
