@@ -893,6 +893,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             }
 
             return Positioned(
+              key: ValueKey('tool_${placement.toolId}_${orientation.name}'),
               left: x,
               top: y,
               width: width,

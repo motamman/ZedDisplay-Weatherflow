@@ -165,8 +165,9 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
         padding: const EdgeInsets.all(12.0),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            // Use scrollable layout when space is tight
-            final useScroll = constraints.maxHeight < 300;
+            // Use scrollable layout in landscape or when space is tight
+            final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+            final useScroll = isLandscape || constraints.maxHeight < 300;
 
             final content = Column(
               mainAxisSize: useScroll ? MainAxisSize.min : MainAxisSize.max,
@@ -194,10 +195,10 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
 
                 // Daily forecast only (hourly removed)
                 if (useScroll)
-                  _buildDailyForecast(context, isDark)
+                  _buildDailyForecast(context, isDark, shrinkWrap: true)
                 else
                   Expanded(
-                    child: _buildDailyForecast(context, isDark),
+                    child: _buildDailyForecast(context, isDark, shrinkWrap: false),
                   ),
               ],
             );
@@ -567,7 +568,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
     );
   }
 
-  Widget _buildDailyForecast(BuildContext context, bool isDark) {
+  Widget _buildDailyForecast(BuildContext context, bool isDark, {bool shrinkWrap = false}) {
     if (widget.dailyForecasts.isEmpty) {
       return Center(
         child: Text(
@@ -583,6 +584,8 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
 
     return ListView.builder(
       scrollDirection: Axis.vertical,
+      shrinkWrap: shrinkWrap,
+      physics: shrinkWrap ? const NeverScrollableScrollPhysics() : null,
       itemCount: forecasts.length,
       itemBuilder: (context, index) {
         final forecast = forecasts[index];
@@ -910,7 +913,7 @@ class _SunMoonArc extends StatelessWidget {
 
     final children = <Widget>[];
 
-    // Helper to calculate position on arc
+    // Helper to calculate position on arc (for markers like sunrise/sunset)
     (double x, double y)? getArcPosition(DateTime time, {double size = 16}) {
       final minutesFromStart = time.difference(arcStart).inMinutes;
       final progress = minutesFromStart / arcDuration;
@@ -925,7 +928,7 @@ class _SunMoonArc extends StatelessWidget {
       return (x, y);
     }
 
-    // Add sunrise/sunset markers for all days within arc range
+    // Add sunrise/sunset/solar noon and moon markers for all days within arc range
     for (final day in times.days) {
       // Sunrise marker
       if (day.sunrise != null && day.sunrise!.isAfter(arcStart) && day.sunrise!.isBefore(arcEnd)) {
@@ -970,6 +973,20 @@ class _SunMoonArc extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+          );
+        }
+      }
+
+      // Solar noon marker (sun at max height)
+      if (day.solarNoon != null && day.solarNoon!.isAfter(arcStart) && day.solarNoon!.isBefore(arcEnd)) {
+        final noonPos = getArcPosition(day.solarNoon!, size: 24);
+        if (noonPos != null) {
+          children.add(
+            Positioned(
+              left: noonPos.$1,
+              top: noonPos.$2 - 8, // Slightly higher to show it's at peak
+              child: const Icon(Icons.wb_sunny, color: Colors.amber, size: 24),
             ),
           );
         }
@@ -1022,33 +1039,34 @@ class _SunMoonArc extends StatelessWidget {
           );
         }
       }
-    }
 
-    // Determine if currently daytime (check against today's times)
-    bool isDaytime = false;
-    if (times.sunrise != null && times.sunset != null) {
-      isDaytime = now.isAfter(times.sunrise!) && now.isBefore(times.sunset!);
-    }
+      // Moon max height (lunar transit - midpoint between moonrise and moonset)
+      if (day.moonrise != null && day.moonset != null) {
+        // Calculate lunar transit (moon at max height)
+        DateTime lunarTransit;
+        if (day.moonset!.isAfter(day.moonrise!)) {
+          // Normal case: moonrise before moonset on same day
+          final midpoint = day.moonrise!.add(
+            Duration(minutes: day.moonset!.difference(day.moonrise!).inMinutes ~/ 2),
+          );
+          lunarTransit = midpoint;
+        } else {
+          // Moonset is next day - transit is ~12 hours from moonrise
+          lunarTransit = day.moonrise!.add(const Duration(hours: 6));
+        }
 
-    // Sun/Moon icon at current position
-    final pos = getArcPosition(now, size: 20);
-    if (pos != null) {
-      if (isDaytime) {
-        children.add(
-          Positioned(
-            left: pos.$1,
-            top: pos.$2,
-            child: const Icon(Icons.wb_sunny, color: Colors.amber, size: 20),
-          ),
-        );
-      } else if (times.moonPhase != null) {
-        children.add(
-          Positioned(
-            left: pos.$1,
-            top: pos.$2,
-            child: _buildMoonIcon(times.moonPhase, times.moonFraction),
-          ),
-        );
+        if (lunarTransit.isAfter(arcStart) && lunarTransit.isBefore(arcEnd)) {
+          final transitPos = getArcPosition(lunarTransit, size: 20);
+          if (transitPos != null) {
+            children.add(
+              Positioned(
+                left: transitPos.$1,
+                top: transitPos.$2 - 6, // Slightly higher to show it's at peak
+                child: _buildMoonIcon(times.moonPhase, times.moonFraction, size: 20),
+              ),
+            );
+          }
+        }
       }
     }
 
@@ -1080,7 +1098,7 @@ class _SunMoonArc extends StatelessWidget {
       ),
     );
 
-    return Stack(clipBehavior: Clip.none, children: children);
+    return Stack(clipBehavior: Clip.hardEdge, children: children);
   }
 
   Widget _buildMoonIcon(double? phase, double? fraction, {double size = 16}) {

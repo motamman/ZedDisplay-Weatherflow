@@ -38,8 +38,13 @@ class DaySunTimes {
 
 /// Sun/Moon times for multiple days
 class SunMoonTimes {
-  /// List of daily sun/moon times, index 0 = today, 1 = tomorrow, etc.
+  /// List of daily sun/moon times
+  /// When todayIndex > 0, earlier indices are past days (e.g., yesterday)
   final List<DaySunTimes> days;
+
+  /// Index in [days] that represents today (default 0)
+  /// Set to 1 when yesterday is included at index 0
+  final int todayIndex;
 
   /// Moon phase info (current)
   final double? moonPhase; // 0-1 (0=new, 0.5=full)
@@ -48,29 +53,35 @@ class SunMoonTimes {
 
   const SunMoonTimes({
     this.days = const [],
+    this.todayIndex = 0,
     this.moonPhase,
     this.moonFraction,
     this.moonAngle,
   });
 
-  /// Get sun times for a specific day (0 = today, 1 = tomorrow, etc.)
-  DaySunTimes? getDay(int index) {
+  /// Get sun times for a specific day relative to today
+  /// 0 = today, 1 = tomorrow, -1 = yesterday, etc.
+  DaySunTimes? getDay(int relativeDay) {
+    final index = todayIndex + relativeDay;
     if (index >= 0 && index < days.length) {
       return days[index];
     }
     return null;
   }
 
-  /// Convenience getters for backwards compatibility
-  DateTime? get sunrise => days.isNotEmpty ? days[0].sunrise : null;
-  DateTime? get sunset => days.isNotEmpty ? days[0].sunset : null;
-  DateTime? get dawn => days.isNotEmpty ? days[0].dawn : null;
-  DateTime? get dusk => days.isNotEmpty ? days[0].dusk : null;
-  DateTime? get nauticalDawn => days.isNotEmpty ? days[0].nauticalDawn : null;
-  DateTime? get nauticalDusk => days.isNotEmpty ? days[0].nauticalDusk : null;
-  DateTime? get solarNoon => days.isNotEmpty ? days[0].solarNoon : null;
-  DateTime? get goldenHour => days.isNotEmpty ? days[0].goldenHour : null;
-  DateTime? get goldenHourEnd => days.isNotEmpty ? days[0].goldenHourEnd : null;
+  /// Get today's sun times
+  DaySunTimes? get today => getDay(0);
+
+  /// Convenience getters for today's times
+  DateTime? get sunrise => today?.sunrise;
+  DateTime? get sunset => today?.sunset;
+  DateTime? get dawn => today?.dawn;
+  DateTime? get dusk => today?.dusk;
+  DateTime? get nauticalDawn => today?.nauticalDawn;
+  DateTime? get nauticalDusk => today?.nauticalDusk;
+  DateTime? get solarNoon => today?.solarNoon;
+  DateTime? get goldenHour => today?.goldenHour;
+  DateTime? get goldenHourEnd => today?.goldenHourEnd;
 }
 
 /// Hourly forecast entry

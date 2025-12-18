@@ -406,9 +406,10 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
       }
 
       // Calculate sun/moon times astronomically for each day
+      // Include yesterday (-1) so the arc can show yesterday's sunset in the morning
       final now = DateTime.now();
       final daysToCalculate = dailyForecasts.isNotEmpty ? dailyForecasts.length : 7;
-      for (int dayIndex = 0; dayIndex < daysToCalculate; dayIndex++) {
+      for (int dayIndex = -1; dayIndex < daysToCalculate; dayIndex++) {
         final date = now.add(Duration(days: dayIndex));
 
         // Use SunCalc for accurate astronomical calculations
@@ -440,6 +441,7 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
         _dailyForecasts = dailyForecasts;
         _sunMoonTimes = SunMoonTimes(
           days: sunTimeDays,
+          todayIndex: 1, // Index 0 is yesterday, index 1 is today
           moonPhase: moonIllum.phase,
           moonFraction: moonIllum.fraction,
           moonAngle: moonIllum.angle,
