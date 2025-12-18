@@ -430,6 +430,8 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
         return _buildCurrentConditionsSettings();
       case 'wind':
         return _buildWindSettings();
+      case 'weatherflow_forecast':
+        return _buildForecastSettings();
       default:
         return const SizedBox.shrink();
     }
@@ -633,6 +635,236 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
                 });
               },
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildForecastSettings() {
+    final weatherFlow = context.watch<WeatherFlowService>();
+    final station = weatherFlow.selectedStation;
+    final sensorDevices = station?.sensorDevices ?? [];
+
+    // Current device source selections
+    final tempSource = _customProperties['tempSource'] as String? ?? 'auto';
+    final humiditySource = _customProperties['humiditySource'] as String? ?? 'auto';
+    final pressureSource = _customProperties['pressureSource'] as String? ?? 'auto';
+    final windSource = _customProperties['windSource'] as String? ?? 'auto';
+    final lightSource = _customProperties['lightSource'] as String? ?? 'auto';
+    final rainSource = _customProperties['rainSource'] as String? ?? 'auto';
+    final lightningSource = _customProperties['lightningSource'] as String? ?? 'auto';
+
+    // Filter options by device capability
+    // ST (Tempest): all measurements
+    // AR (Air): temp, humidity, pressure, lightning
+    // SK (Sky): wind, light, rain
+    final atmosphericDevices = sensorDevices.where(
+      (d) => d.deviceType == 'ST' || d.deviceType == 'AR',
+    ).toList();
+    final windDevices = sensorDevices.where(
+      (d) => d.deviceType == 'ST' || d.deviceType == 'SK',
+    ).toList();
+
+    List<DropdownMenuItem<String>> buildOptionsFor(List<dynamic> devices) {
+      return [
+        const DropdownMenuItem(
+          value: 'auto',
+          child: Text('Auto (best available)'),
+        ),
+        ...devices.map((device) => DropdownMenuItem(
+          value: device.serialNumber,
+          child: Text('${device.deviceTypeName} (${device.serialNumber})'),
+        )),
+      ];
+    }
+
+    final atmosphericOptions = buildOptionsFor(atmosphericDevices);
+    final windOptions = buildOptionsFor(windDevices);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Device Sources',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Select which device to use for each measurement type. '
+              'Air devices provide atmospheric data (temp, humidity, pressure, lightning). '
+              'Sky devices provide wind, light, and rain data. '
+              'Tempest provides all measurements.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+
+            if (sensorDevices.isEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning, color: Colors.orange),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'No devices found. Select a station first.',
+                        style: TextStyle(color: Colors.orange.shade700),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else ...[
+              // Show available devices
+              Text(
+                'Available Devices:',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+              ...sensorDevices.map((device) => Padding(
+                padding: const EdgeInsets.only(left: 8, bottom: 4),
+                child: Row(
+                  children: [
+                    Icon(
+                      device.deviceType == 'ST' ? Icons.all_inclusive :
+                      device.deviceType == 'AR' ? Icons.thermostat :
+                      Icons.air,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${device.deviceTypeName}: ${device.serialNumber}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      device.deviceType == 'ST' ? '(all data)' :
+                      device.deviceType == 'AR' ? '(atmospheric)' :
+                      '(wind/light/rain)',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              )),
+              const Divider(height: 24),
+
+              // Atmospheric measurements (temp, humidity, pressure, lightning)
+              Text(
+                'Atmospheric Data (Air/Tempest)',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Temperature Source',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                value: atmosphericOptions.any((o) => o.value == tempSource) ? tempSource : 'auto',
+                items: atmosphericOptions,
+                onChanged: (value) {
+                  setState(() => _customProperties['tempSource'] = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Humidity Source',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                value: atmosphericOptions.any((o) => o.value == humiditySource) ? humiditySource : 'auto',
+                items: atmosphericOptions,
+                onChanged: (value) {
+                  setState(() => _customProperties['humiditySource'] = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Pressure Source',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                value: atmosphericOptions.any((o) => o.value == pressureSource) ? pressureSource : 'auto',
+                items: atmosphericOptions,
+                onChanged: (value) {
+                  setState(() => _customProperties['pressureSource'] = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Lightning Source',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                value: atmosphericOptions.any((o) => o.value == lightningSource) ? lightningSource : 'auto',
+                items: atmosphericOptions,
+                onChanged: (value) {
+                  setState(() => _customProperties['lightningSource'] = value);
+                },
+              ),
+
+              const Divider(height: 24),
+
+              // Wind/Light/Rain measurements (Sky/Tempest)
+              Text(
+                'Wind & Precipitation Data (Sky/Tempest)',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Wind Source',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                value: windOptions.any((o) => o.value == windSource) ? windSource : 'auto',
+                items: windOptions,
+                onChanged: (value) {
+                  setState(() => _customProperties['windSource'] = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Light/UV Source',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                value: windOptions.any((o) => o.value == lightSource) ? lightSource : 'auto',
+                items: windOptions,
+                onChanged: (value) {
+                  setState(() => _customProperties['lightSource'] = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Rain Source',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                value: windOptions.any((o) => o.value == rainSource) ? rainSource : 'auto',
+                items: windOptions,
+                onChanged: (value) {
+                  setState(() => _customProperties['rainSource'] = value);
+                },
+              ),
+            ],
           ],
         ),
       ),

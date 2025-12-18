@@ -95,6 +95,20 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool> {
     _loadForecast();
   }
 
+  /// Get configured primary color or fall back to theme color
+  Color _getPrimaryColor(BuildContext context) {
+    final colorString = widget.config.style.primaryColor;
+    if (colorString != null && colorString.isNotEmpty) {
+      try {
+        final hexColor = colorString.replaceAll('#', '');
+        return Color(int.parse('FF$hexColor', radix: 16));
+      } catch (e) {
+        // Invalid color format, fall back to theme
+      }
+    }
+    return Theme.of(context).colorScheme.primary;
+  }
+
   @override
   void didUpdateWidget(WeatherApiSpinnerTool oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -363,7 +377,7 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool> {
           tempUnit: tempUnit == 'C' ? '°C' : '°F',
           windUnit: windUnit,
           pressureUnit: 'hPa',
-          primaryColor: Theme.of(context).colorScheme.primary,
+          primaryColor: _getPrimaryColor(context),
           providerName: 'WeatherFlow',
           showWeatherAnimation: showAnimation,
         ),

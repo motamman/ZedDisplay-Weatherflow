@@ -56,6 +56,20 @@ class CurrentConditionsTool extends StatelessWidget {
     required this.weatherFlowService,
   });
 
+  /// Get configured primary color or fall back to theme color
+  Color _getPrimaryColor(BuildContext context) {
+    final colorString = config.style.primaryColor;
+    if (colorString != null && colorString.isNotEmpty) {
+      try {
+        final hexColor = colorString.replaceAll('#', '');
+        return Color(int.parse('FF$hexColor', radix: 16));
+      } catch (e) {
+        // Invalid color format, fall back to theme
+      }
+    }
+    return Theme.of(context).colorScheme.primary;
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -63,6 +77,7 @@ class CurrentConditionsTool extends StatelessWidget {
       builder: (context, _) {
         final observation = weatherFlowService.currentObservation;
         final conversions = weatherFlowService.conversions;
+        final primaryColor = _getPrimaryColor(context);
 
         if (observation == null) {
           return const Center(
@@ -106,7 +121,7 @@ class CurrentConditionsTool extends StatelessWidget {
                       Icon(
                         Icons.water_drop,
                         size: 20,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: primaryColor,
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -124,7 +139,7 @@ class CurrentConditionsTool extends StatelessWidget {
                       Icon(
                         Icons.compress,
                         size: 20,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: primaryColor,
                       ),
                       const SizedBox(height: 4),
                       Text(

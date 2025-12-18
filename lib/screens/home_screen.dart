@@ -406,7 +406,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildStatValue(
                   'Distance',
                   lightningDist != null
-                      ? conversions.formatDistance(lightningDist * 1000)
+                      ? conversions.formatDistance(lightningDist) // Already in meters
                       : '--',
                 ),
               ],

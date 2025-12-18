@@ -35,7 +35,7 @@ class Observation {
   final PrecipType precipType;
 
   // Lightning
-  final double? lightningDistance; // km
+  final double? lightningDistance; // meters (converted from API km)
   final int? lightningCount; // strikes in last minute
 
   // Device health
@@ -105,7 +105,7 @@ class Observation {
       solarRadiation: (obs[10] as num?)?.toDouble(),
       rainAccumulated: obs[11] != null ? (obs[11] as num).toDouble() / 1000 : null, // mm to m
       precipType: _parsePrecipType(obs[12] as int?),
-      lightningDistance: (obs[13] as num?)?.toDouble(),
+      lightningDistance: obs[13] != null ? (obs[13] as num).toDouble() * 1000 : null, // km to m
       lightningCount: obs[14] as int?,
       batteryVoltage: (obs[15] as num?)?.toDouble(),
       reportInterval: obs[16] as int?,
@@ -155,7 +155,7 @@ class Observation {
       rainAccumulated: data[12] != null ? (data[12] as num).toDouble() / 1000 : null, // mm to m
       precipType: _parsePrecipType(data[13] as int?),
       lightningCount: data[14] as int?,
-      lightningDistance: (data[15] as num?)?.toDouble(),
+      lightningDistance: data[15] != null ? (data[15] as num).toDouble() * 1000 : null, // km to m
       batteryVoltage: (data[16] as num?)?.toDouble(),
       reportInterval: data[17] as int?,
       // Calculated values from summary
@@ -206,10 +206,10 @@ class Observation {
       illuminance: (data[9] as num?)?.toDouble(),
       uvIndex: (data[10] as num?)?.toDouble(),
       solarRadiation: (data[11] as num?)?.toDouble(),
-      rainAccumulated: data[12] != null ? (data[12] as num).toDouble() / 1000 : null,
+      rainAccumulated: data[12] != null ? (data[12] as num).toDouble() / 1000 : null, // mm to m
       precipType: _parsePrecipType(data[13] as int?),
       lightningCount: data[14] as int?,
-      lightningDistance: (data[15] as num?)?.toDouble(),
+      lightningDistance: data[15] != null ? (data[15] as num).toDouble() * 1000 : null, // km to m
       batteryVoltage: (data[16] as num?)?.toDouble(),
       reportInterval: data[17] as int?,
     );
@@ -279,7 +279,7 @@ class Observation {
 class LightningStrike {
   final DateTime timestamp;
   final int deviceId;
-  final double distance; // km
+  final double distance; // meters (converted from API km)
   final double energy;
 
   const LightningStrike({
@@ -294,7 +294,7 @@ class LightningStrike {
     return LightningStrike(
       timestamp: DateTime.fromMillisecondsSinceEpoch((evt[0] as int) * 1000),
       deviceId: json['device_id'] as int? ?? 0,
-      distance: (evt[1] as num).toDouble(),
+      distance: (evt[1] as num).toDouble() * 1000, // km to m
       energy: (evt[2] as num).toDouble(),
     );
   }

@@ -157,7 +157,9 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
                 // Current conditions
                 if (widget.showCurrentConditions) ...[
                   _buildCurrentConditions(context, isDark),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
+                  _buildLegend(context, isDark),
+                  const SizedBox(height: 6),
                   Divider(color: isDark ? Colors.white24 : Colors.black12),
                   const SizedBox(height: 4),
                 ],
@@ -327,6 +329,43 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
               color: isDark ? Colors.white60 : Colors.black45,
             ),
           ),
+      ],
+    );
+  }
+
+  Widget _buildLegend(BuildContext context, bool isDark) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _buildLegendItem('Live', Colors.green, isDark),
+        const SizedBox(width: 12),
+        _buildLegendItem('Observed', Colors.blue, isDark),
+        const SizedBox(width: 12),
+        _buildLegendItem('Forecast', Colors.orange, isDark),
+      ],
+    );
+  }
+
+  Widget _buildLegendItem(String label, Color color, bool isDark) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            color: isDark ? Colors.white60 : Colors.black54,
+          ),
+        ),
       ],
     );
   }

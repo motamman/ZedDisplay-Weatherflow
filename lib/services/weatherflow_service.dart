@@ -29,6 +29,9 @@ class WeatherFlowService extends ChangeNotifier {
   Observation? _currentObservation;
   ForecastResponse? _currentForecast;
 
+  // Per-device observations (keyed by device serial number)
+  final Map<String, Observation> _deviceObservations = {};
+
   // Event history
   final List<LightningStrike> _lightningStrikes = [];
   DateTime? _lastRainStart;
@@ -85,6 +88,93 @@ class WeatherFlowService extends ChangeNotifier {
 
   /// UDP service for external access
   UdpService? get udpService => _udp;
+
+  /// All device observations (keyed by serial number)
+  Map<String, Observation> get deviceObservations => Map.unmodifiable(_deviceObservations);
+
+  /// Get observation for a specific device by serial number
+  Observation? getDeviceObservation(String serialNumber) => _deviceObservations[serialNumber];
+
+  /// Get observation for a specific device type (ST, AR, SK)
+  /// Returns the first matching device observation
+  Observation? getObservationByDeviceType(String deviceType) {
+    final device = _selectedStation?.devices.firstWhere(
+      (d) => d.deviceType == deviceType,
+      orElse: () => Device(deviceId: 0, serialNumber: '', deviceType: ''),
+    );
+    if (device != null && device.serialNumber.isNotEmpty) {
+      return _deviceObservations[device.serialNumber];
+    }
+    return null;
+  }
+
+  /// Get merged observation using specified device sources for each measurement
+  /// Sources map: measurement type -> device serial number (or 'auto' for best available)
+  Observation? getMergedObservation({
+    String? tempSource,
+    String? humiditySource,
+    String? pressureSource,
+    String? windSource,
+    String? lightSource,
+    String? rainSource,
+    String? lightningSource,
+  }) {
+    if (_deviceObservations.isEmpty && _currentObservation == null) return null;
+
+    // Helper to get value from specified source or auto-select
+    T? getValue<T>(String? source, T? Function(Observation) getter) {
+      if (source != null && source != 'auto' && _deviceObservations.containsKey(source)) {
+        return getter(_deviceObservations[source]!);
+      }
+      // Auto: try all device observations, then current observation
+      for (final obs in _deviceObservations.values) {
+        final value = getter(obs);
+        if (value != null) return value;
+      }
+      return _currentObservation != null ? getter(_currentObservation!) : null;
+    }
+
+    // Determine best source for observation metadata
+    final bestObs = _deviceObservations.values.isNotEmpty
+        ? _deviceObservations.values.first
+        : _currentObservation;
+    if (bestObs == null) return null;
+
+    return Observation(
+      timestamp: bestObs.timestamp,
+      deviceId: bestObs.deviceId,
+      source: bestObs.source,
+      // Temperature from specified source
+      temperature: getValue(tempSource, (o) => o.temperature),
+      humidity: getValue(humiditySource, (o) => o.humidity),
+      stationPressure: getValue(pressureSource, (o) => o.stationPressure),
+      seaLevelPressure: getValue(pressureSource, (o) => o.seaLevelPressure),
+      // Wind from specified source
+      windAvg: getValue(windSource, (o) => o.windAvg),
+      windGust: getValue(windSource, (o) => o.windGust),
+      windLull: getValue(windSource, (o) => o.windLull),
+      windDirection: getValue(windSource, (o) => o.windDirection),
+      // Light from specified source
+      illuminance: getValue(lightSource, (o) => o.illuminance),
+      uvIndex: getValue(lightSource, (o) => o.uvIndex),
+      solarRadiation: getValue(lightSource, (o) => o.solarRadiation),
+      // Rain from specified source
+      rainAccumulated: getValue(rainSource, (o) => o.rainAccumulated),
+      rainRate: getValue(rainSource, (o) => o.rainRate),
+      precipType: bestObs.precipType,
+      // Lightning from specified source
+      lightningDistance: getValue(lightningSource, (o) => o.lightningDistance),
+      lightningCount: getValue(lightningSource, (o) => o.lightningCount),
+      // Battery from best observation
+      batteryVoltage: bestObs.batteryVoltage,
+      reportInterval: bestObs.reportInterval,
+      // Calculated values
+      feelsLike: getValue(tempSource, (o) => o.feelsLike),
+      dewPoint: getValue(tempSource, (o) => o.dewPoint),
+      heatIndex: getValue(tempSource, (o) => o.heatIndex),
+      windChill: getValue(tempSource, (o) => o.windChill),
+    );
+  }
 
   // ============ Initialization ============
 
@@ -226,6 +316,9 @@ class WeatherFlowService extends ChangeNotifier {
   void _clearStationData() {
     _currentObservation = null;
     _currentForecast = null;
+    _deviceObservations.clear();
+    _lightningStrikes.clear();
+    _lastRainStart = null;
     _error = null;
     debugPrint('WeatherFlowService: Cleared station data for station switch');
   }
@@ -296,17 +389,21 @@ class WeatherFlowService extends ChangeNotifier {
   }
 
   Future<void> _connectUdp() async {
-    // Get the selected station's Tempest device to filter UDP messages
-    final device = _selectedStation?.tempestDevice;
-    if (device == null) {
-      debugPrint('WeatherFlowService: No Tempest device for UDP');
+    // Get ALL sensor devices from the selected station (ST, AR, SK - not Hub)
+    final sensorDevices = _selectedStation?.sensorDevices ?? [];
+    if (sensorDevices.isEmpty) {
+      debugPrint('WeatherFlowService: No sensor devices for UDP');
       return;
     }
 
     _udp = UdpService(port: _storage.udpPort);
 
-    // Configure device filter - only process messages from this device
-    _udp!.setDevice(device.serialNumber, device.deviceId);
+    // Configure device filter - accept all sensor devices from this station
+    final deviceMap = <String, int>{};
+    for (final device in sensorDevices) {
+      deviceMap[device.serialNumber] = device.deviceId;
+    }
+    _udp!.setDevices(deviceMap);
 
     _udp!.onObservation = _handleUdpObservation;
     _udp!.onRapidWind = _handleRapidWind;
@@ -320,7 +417,8 @@ class WeatherFlowService extends ChangeNotifier {
       if (_connectionType != ConnectionType.websocket) {
         _connectionType = ConnectionType.udp;
       }
-      debugPrint('WeatherFlowService: UDP listening on port ${_storage.udpPort} for device ${device.serialNumber}');
+      final deviceList = sensorDevices.map((d) => d.serialNumber).join(', ');
+      debugPrint('WeatherFlowService: UDP listening on port ${_storage.udpPort} for devices: $deviceList');
     } else {
       debugPrint('WeatherFlowService: Failed to start UDP listener');
     }
@@ -357,6 +455,17 @@ class WeatherFlowService extends ChangeNotifier {
 
   void _handleUdpObservation(Observation obs) {
     _currentObservation = obs;
+
+    // Store observation by device serial number
+    final device = _selectedStation?.devices.firstWhere(
+      (d) => d.deviceId == obs.deviceId,
+      orElse: () => Device(deviceId: 0, serialNumber: '', deviceType: ''),
+    );
+    if (device != null && device.serialNumber.isNotEmpty) {
+      _deviceObservations[device.serialNumber] = obs;
+      debugPrint('WeatherFlowService: Stored observation for ${device.serialNumber} (${device.deviceTypeName})');
+    }
+
     // Mark as UDP if we're not already on WebSocket
     if (_connectionType != ConnectionType.websocket) {
       _connectionType = ConnectionType.udp;

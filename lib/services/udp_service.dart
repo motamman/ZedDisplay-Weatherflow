@@ -30,9 +30,9 @@ class UdpService extends ChangeNotifier {
   DateTime? _lastMessageAt;
   String? _lastError;
 
-  // Device filtering - only process messages from this device
-  String? _deviceSerialNumber;
-  int? _deviceId;
+  // Device filtering - process messages from these devices
+  // Map of serial number -> device ID for all station sensors
+  final Map<String, int> _allowedDevices = {};
 
   // Hub info (discovered from broadcasts)
   String? _hubSerialNumber;
@@ -73,8 +73,8 @@ class UdpService extends ChangeNotifier {
   /// Current port
   int get port => _port;
 
-  /// Device serial number being filtered
-  String? get deviceSerialNumber => _deviceSerialNumber;
+  /// Allowed device serial numbers
+  Set<String> get allowedDevices => _allowedDevices.keys.toSet();
 
   /// Hub serial number (discovered from broadcasts)
   String? get hubSerialNumber => _hubSerialNumber;
@@ -91,16 +91,26 @@ class UdpService extends ChangeNotifier {
   /// [serialNumber] is the device serial number (e.g., "ST-00000512")
   /// [deviceId] is the numeric device ID used in observations
   void setDevice(String serialNumber, int deviceId) {
-    _deviceSerialNumber = serialNumber;
-    _deviceId = deviceId;
+    _allowedDevices.clear();
+    _allowedDevices[serialNumber] = deviceId;
     debugPrint('UdpService: Filtering for device $serialNumber (ID: $deviceId)');
   }
 
-  /// Clear device filter (process all messages)
-  void clearDevice() {
-    _deviceSerialNumber = null;
-    _deviceId = null;
+  /// Set multiple devices to accept (all sensor devices from a station)
+  /// Map of serial number -> device ID
+  void setDevices(Map<String, int> devices) {
+    _allowedDevices.clear();
+    _allowedDevices.addAll(devices);
+    debugPrint('UdpService: Filtering for ${devices.length} devices: ${devices.keys.join(", ")}');
   }
+
+  /// Clear device filter (process all messages)
+  void clearDevices() {
+    _allowedDevices.clear();
+  }
+
+  /// Get device ID for a serial number
+  int? getDeviceId(String serialNumber) => _allowedDevices[serialNumber];
 
   /// Start listening for UDP broadcasts
   Future<void> startListening() async {
@@ -183,13 +193,13 @@ class UdpService extends ChangeNotifier {
 
     debugPrint('UdpService: Received $type from $serialNumber');
 
-    // Filter messages by device serial number (except hub status)
-    if (_deviceSerialNumber != null &&
+    // Filter messages by allowed devices (except hub status)
+    if (_allowedDevices.isNotEmpty &&
         serialNumber != null &&
         type != _msgHubStatus &&
-        serialNumber != _deviceSerialNumber) {
-      // Message from different device, ignore
-      debugPrint('UdpService: Ignoring message from $serialNumber (expecting $_deviceSerialNumber)');
+        !_allowedDevices.containsKey(serialNumber)) {
+      // Message from device not in our allowed list, ignore
+      debugPrint('UdpService: Ignoring message from $serialNumber (not in allowed devices)');
       return;
     }
 
@@ -234,8 +244,9 @@ class UdpService extends ChangeNotifier {
   void _handleObsTempest(Map<String, dynamic> json) {
     try {
       final obs = json['obs'] as List?;
-      // Use configured device ID, or parse from serial number as fallback
-      final deviceId = _deviceId ?? _parseDeviceId(json['serial_number'] as String? ?? '');
+      final serialNumber = json['serial_number'] as String? ?? '';
+      // Use configured device ID from allowed list, or parse from serial number as fallback
+      final deviceId = _allowedDevices[serialNumber] ?? _parseDeviceId(serialNumber);
 
       if (obs != null && obs.isNotEmpty) {
         // obs is a list of observation arrays
@@ -258,7 +269,8 @@ class UdpService extends ChangeNotifier {
     // obs_air format: [epoch, pressure, temp, humidity, lightningCount, lightningAvgDist, battery, reportInterval]
     try {
       final obs = json['obs'] as List?;
-      final deviceId = _deviceId ?? _parseDeviceId(json['serial_number'] as String? ?? '');
+      final serialNumber = json['serial_number'] as String? ?? '';
+      final deviceId = _allowedDevices[serialNumber] ?? _parseDeviceId(serialNumber);
 
       if (obs != null && obs.isNotEmpty) {
         for (final obsData in obs) {
@@ -267,11 +279,11 @@ class UdpService extends ChangeNotifier {
               timestamp: DateTime.fromMillisecondsSinceEpoch((obsData[0] as int) * 1000),
               deviceId: deviceId,
               source: ObservationSource.udp,
-              stationPressure: obsData[1] != null ? (obsData[1] as num).toDouble() * 100 : null,
-              temperature: obsData[2] != null ? (obsData[2] as num).toDouble() + 273.15 : null,
-              humidity: obsData[3] != null ? (obsData[3] as num).toDouble() / 100 : null,
+              stationPressure: obsData[1] != null ? (obsData[1] as num).toDouble() * 100 : null, // mbar to Pa
+              temperature: obsData[2] != null ? (obsData[2] as num).toDouble() + 273.15 : null, // C to K
+              humidity: obsData[3] != null ? (obsData[3] as num).toDouble() / 100 : null, // % to ratio
               lightningCount: obsData[4] as int?,
-              lightningDistance: (obsData[5] as num?)?.toDouble(),
+              lightningDistance: obsData[5] != null ? (obsData[5] as num).toDouble() * 1000 : null, // km to m
               batteryVoltage: (obsData[6] as num?)?.toDouble(),
               reportInterval: obsData[7] as int?,
             );
@@ -288,7 +300,8 @@ class UdpService extends ChangeNotifier {
     // obs_sky format: [epoch, illuminance, uv, rainAccum, windLull, windAvg, windGust, windDir, battery, reportInterval, solarRad, dayRain, precipType, windInterval]
     try {
       final obs = json['obs'] as List?;
-      final deviceId = _deviceId ?? _parseDeviceId(json['serial_number'] as String? ?? '');
+      final serialNumber = json['serial_number'] as String? ?? '';
+      final deviceId = _allowedDevices[serialNumber] ?? _parseDeviceId(serialNumber);
 
       if (obs != null && obs.isNotEmpty) {
         for (final obsData in obs) {
@@ -320,7 +333,8 @@ class UdpService extends ChangeNotifier {
   void _handleRapidWind(Map<String, dynamic> json) {
     try {
       final obs = json['ob'] as List?;
-      final deviceId = _deviceId ?? _parseDeviceId(json['serial_number'] as String? ?? '');
+      final serialNumber = json['serial_number'] as String? ?? '';
+      final deviceId = _allowedDevices[serialNumber] ?? _parseDeviceId(serialNumber);
 
       if (obs != null) {
         final rapidWind = Observation.fromUdpRapidWind(
@@ -337,7 +351,8 @@ class UdpService extends ChangeNotifier {
   void _handleRainStart(Map<String, dynamic> json) {
     try {
       final evt = json['evt'] as List?;
-      final deviceId = _deviceId ?? _parseDeviceId(json['serial_number'] as String? ?? '');
+      final serialNumber = json['serial_number'] as String? ?? '';
+      final deviceId = _allowedDevices[serialNumber] ?? _parseDeviceId(serialNumber);
 
       if (evt != null && evt.isNotEmpty) {
         final event = RainStartEvent(
@@ -354,13 +369,14 @@ class UdpService extends ChangeNotifier {
   void _handleLightning(Map<String, dynamic> json) {
     try {
       final evt = json['evt'] as List?;
-      final deviceId = _deviceId ?? _parseDeviceId(json['serial_number'] as String? ?? '');
+      final serialNumber = json['serial_number'] as String? ?? '';
+      final deviceId = _allowedDevices[serialNumber] ?? _parseDeviceId(serialNumber);
 
       if (evt != null && evt.length >= 3) {
         final strike = LightningStrike(
           timestamp: DateTime.fromMillisecondsSinceEpoch((evt[0] as int) * 1000),
           deviceId: deviceId,
-          distance: (evt[1] as num).toDouble(),
+          distance: (evt[1] as num).toDouble() * 1000, // km to m
           energy: (evt[2] as num).toDouble(),
         );
         onLightning?.call(strike);
