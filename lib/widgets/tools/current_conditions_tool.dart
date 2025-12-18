@@ -29,7 +29,7 @@ class CurrentConditionsToolBuilder extends ToolBuilder {
   }
 
   @override
-  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false}) {
+  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name}) {
     return CurrentConditionsTool(
       config: config,
       weatherFlowService: weatherFlowService,

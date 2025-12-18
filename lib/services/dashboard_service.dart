@@ -132,12 +132,9 @@ class DashboardService extends ChangeNotifier {
   }
 
   /// Remove a screen from the current layout
+  /// If the last screen is removed, a blank replacement is created
   Future<void> removeScreen(String screenId) async {
     if (_currentLayout == null) return;
-    if (_currentLayout!.screens.length <= 1) {
-      // Can't remove the last screen
-      return;
-    }
 
     _currentLayout = _currentLayout!.removeScreen(screenId);
     notifyListeners();

@@ -45,11 +45,12 @@ class WeatherFlowForecastToolBuilder implements ToolBuilder {
   }
 
   @override
-  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false}) {
+  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name}) {
     return WeatherFlowForecastTool(
       config: config,
       weatherFlowService: weatherFlowService,
       isEditMode: isEditMode,
+      name: name,
     );
   }
 
@@ -63,8 +64,10 @@ class WeatherFlowForecastToolBuilder implements ToolBuilder {
         customProperties: {
           'hoursToShow': 12,
           'daysToShow': 7,
-          'showCurrentConditions': true,
+          'showTitle': true,
           'showSunMoonArc': true,
+          'showCurrentConditions': true,
+          'showDailyForecast': true,
           'use24HourFormat': false, // false = 12-hour AM/PM, true = 24-hour military
           // Device source preferences ('auto' or device serial number)
           // Measurement types: temp, humidity, pressure, wind, light, rain, lightning
@@ -86,12 +89,14 @@ class WeatherFlowForecastTool extends StatefulWidget {
   final ToolConfig config;
   final WeatherFlowService weatherFlowService;
   final bool isEditMode;
+  final String? name;
 
   const WeatherFlowForecastTool({
     super.key,
     required this.config,
     required this.weatherFlowService,
     this.isEditMode = false,
+    this.name,
   });
 
   @override
@@ -461,8 +466,10 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
     final customProps = widget.config.style.customProperties ?? {};
     final hoursToShow = customProps['hoursToShow'] as int? ?? 12;
     final daysToShow = customProps['daysToShow'] as int? ?? 7;
-    final showCurrentConditions = customProps['showCurrentConditions'] as bool? ?? true;
+    final showTitle = customProps['showTitle'] as bool? ?? true;
     final showSunMoonArc = customProps['showSunMoonArc'] as bool? ?? true;
+    final showCurrentConditions = customProps['showCurrentConditions'] as bool? ?? true;
+    final showDailyForecast = customProps['showDailyForecast'] as bool? ?? true;
     final use24HourFormat = customProps['use24HourFormat'] as bool? ?? false;
 
     // Get the ConversionService from WeatherFlowService - respects user preferences
@@ -569,7 +576,10 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
           showCurrentConditions: showCurrentConditions,
           sunMoonTimes: _sunMoonTimes,
           showSunMoonArc: showSunMoonArc,
+          showDailyForecast: showDailyForecast,
           use24HourFormat: use24HourFormat,
+          title: widget.name,
+          showTitle: showTitle,
         ),
         // Refresh button in top right corner (hidden in edit mode so dashboard controls are visible)
         if (!widget.isEditMode)

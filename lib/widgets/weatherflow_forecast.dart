@@ -94,8 +94,17 @@ class WeatherFlowForecast extends StatefulWidget {
   /// Show sun/moon arc
   final bool showSunMoonArc;
 
+  /// Show daily forecast section
+  final bool showDailyForecast;
+
   /// Use 24-hour (military) time format instead of 12-hour AM/PM
   final bool use24HourFormat;
+
+  /// Widget title (display name)
+  final String? title;
+
+  /// Show widget title
+  final bool showTitle;
 
   const WeatherFlowForecast({
     super.key,
@@ -124,7 +133,10 @@ class WeatherFlowForecast extends StatefulWidget {
     this.showCurrentConditions = true,
     this.sunMoonTimes,
     this.showSunMoonArc = true,
+    this.showDailyForecast = true,
     this.use24HourFormat = false,
+    this.title,
+    this.showTitle = true,
   });
 
   @override
@@ -173,9 +185,11 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
               mainAxisSize: useScroll ? MainAxisSize.min : MainAxisSize.max,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header
-                _buildHeader(context),
-                const SizedBox(height: 8),
+                // Header (title)
+                if (widget.showTitle) ...[
+                  _buildHeader(context),
+                  const SizedBox(height: 8),
+                ],
 
                 // Sun/Moon arc (beneath header, above current conditions)
                 if (widget.showSunMoonArc && widget.sunMoonTimes != null) ...[
@@ -194,12 +208,14 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
                 ],
 
                 // Daily forecast only (hourly removed)
-                if (useScroll)
-                  _buildDailyForecast(context, isDark, shrinkWrap: true)
-                else
-                  Expanded(
-                    child: _buildDailyForecast(context, isDark, shrinkWrap: false),
-                  ),
+                if (widget.showDailyForecast) ...[
+                  if (useScroll)
+                    _buildDailyForecast(context, isDark, shrinkWrap: true)
+                  else
+                    Expanded(
+                      child: _buildDailyForecast(context, isDark, shrinkWrap: false),
+                    ),
+                ],
               ],
             );
 
@@ -214,6 +230,11 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
   }
 
   Widget _buildHeader(BuildContext context) {
+    // Use custom title if provided, otherwise default
+    final displayTitle = widget.title?.isNotEmpty == true
+        ? widget.title!
+        : 'WeatherFlow Forecast';
+
     return Row(
       children: [
         Icon(
@@ -222,11 +243,14 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           size: 20,
         ),
         const SizedBox(width: 8),
-        Text(
-          'WeatherFlow Forecast',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+        Expanded(
+          child: Text(
+            displayTitle,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ],
     );

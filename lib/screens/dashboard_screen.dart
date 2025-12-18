@@ -570,6 +570,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildDashboard(dynamic layout, DashboardService dashboardService, WeatherFlowService weatherFlow) {
+    // Handle empty screens case
+    if (layout.screens.isEmpty) {
+      return const Center(
+        child: Text('No screens available'),
+      );
+    }
+
+    // Safely clamp activeScreenIndex to valid range
+    final safeIndex = layout.activeScreenIndex.clamp(0, layout.screens.length - 1);
+
     return Stack(
       children: [
         // Swipe gesture detector + IndexedStack for screens
@@ -591,7 +601,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _dragDelta = 0;
           },
           child: IndexedStack(
-            index: layout.activeScreenIndex,
+            index: safeIndex,
             children: layout.screens.map<Widget>((screen) {
               return _buildScreenContent(screen, dashboardService, weatherFlow);
             }).toList(),
@@ -733,7 +743,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     // Tool widget
                     Padding(
                       padding: const EdgeInsets.all(8),
-                      child: toolRegistry.buildTool(tool.toolTypeId, effectiveConfig, weatherFlow, isEditMode: true),
+                      child: toolRegistry.buildTool(tool.toolTypeId, effectiveConfig, weatherFlow, isEditMode: true, name: tool.name),
                     ),
 
                     // Drag-to-move handle at top-left
@@ -888,7 +898,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               // Normal mode
               widgetContent = Padding(
                 padding: const EdgeInsets.all(8),
-                child: toolRegistry.buildTool(tool.toolTypeId, effectiveConfig, weatherFlow),
+                child: toolRegistry.buildTool(tool.toolTypeId, effectiveConfig, weatherFlow, name: tool.name),
               );
             }
 

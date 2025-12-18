@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/storage_service.dart';
 import 'services/weatherflow_service.dart';
+import 'services/nws_alert_service.dart';
 import 'services/tool_registry.dart';
 import 'services/tool_service.dart';
 import 'services/dashboard_service.dart';
@@ -58,6 +59,20 @@ void main() async {
           ),
           update: (context, storage, previous) =>
               previous ?? WeatherFlowService(storage: storage),
+        ),
+
+        // NWS Alert Service (shared across all tools)
+        ChangeNotifierProxyProvider<WeatherFlowService, NWSAlertService>(
+          create: (context) => NWSAlertService(),
+          update: (context, weatherFlow, previous) {
+            final service = previous ?? NWSAlertService();
+            // Update station location when it changes
+            final station = weatherFlow.selectedStation;
+            if (station != null) {
+              service.setStationLocation(station.latitude, station.longitude);
+            }
+            return service;
+          },
         ),
       ],
       child: const WeatherFlowApp(),

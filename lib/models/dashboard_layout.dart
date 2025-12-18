@@ -65,8 +65,40 @@ class DashboardLayout {
 
   /// Remove a screen from this layout
   DashboardLayout removeScreen(String screenId) {
+    final removedIndex = screens.indexWhere((s) => s.id == screenId);
+    if (removedIndex < 0) return this; // Screen not found
+
+    var newScreens = screens.where((s) => s.id != screenId).toList();
+
+    // If last screen was deleted, create a blank replacement
+    if (newScreens.isEmpty) {
+      newScreens = [
+        DashboardScreen(
+          id: 'screen_${DateTime.now().millisecondsSinceEpoch}',
+          name: 'Screen 1',
+        ),
+      ];
+      return copyWith(
+        screens: newScreens,
+        activeScreenIndex: 0,
+      );
+    }
+
+    // Adjust activeScreenIndex if needed
+    int newActiveIndex = activeScreenIndex;
+    if (removedIndex < activeScreenIndex) {
+      // Removed screen was before active - shift index down
+      newActiveIndex = activeScreenIndex - 1;
+    } else if (removedIndex == activeScreenIndex) {
+      // Removed the active screen - go to previous (or stay at 0)
+      newActiveIndex = (activeScreenIndex > 0) ? activeScreenIndex - 1 : 0;
+    }
+    // Clamp to valid range
+    newActiveIndex = newActiveIndex.clamp(0, newScreens.length - 1);
+
     return copyWith(
-      screens: screens.where((s) => s.id != screenId).toList(),
+      screens: newScreens,
+      activeScreenIndex: newActiveIndex,
     );
   }
 

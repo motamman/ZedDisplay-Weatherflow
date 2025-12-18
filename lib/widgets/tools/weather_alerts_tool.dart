@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:provider/provider.dart';
 import '../../models/tool_definition.dart';
 import '../../models/tool_config.dart';
 import '../../services/tool_registry.dart';
@@ -78,7 +79,7 @@ class WeatherAlertsTool extends StatefulWidget {
 
 class _WeatherAlertsToolState extends State<WeatherAlertsTool>
     with SingleTickerProviderStateMixin {
-  late NWSAlertService _alertService;
+  NWSAlertService? _alertService;
   String? _expandedAlertId;
   late AnimationController _pulseController;
   bool _isInitialized = false;
@@ -86,17 +87,27 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
   @override
   void initState() {
     super.initState();
-    _alertService = NWSAlertService();
 
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
 
-    _initializeService();
+    // Defer service setup to didChangeDependencies where context is available
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_alertService == null) {
+      _alertService = context.read<NWSAlertService>();
+      _initializeService();
+    }
   }
 
   Future<void> _initializeService() async {
+    final alertService = _alertService!;
+
     // Get location source from config
     final props = widget.config.style.customProperties ?? {};
     final sourceStr = props['locationSource'] as String? ?? 'both';
@@ -104,22 +115,24 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
       (s) => s.name == sourceStr,
       orElse: () => AlertLocationSource.both,
     );
-    _alertService.setLocationSource(source);
+    alertService.setLocationSource(source);
 
     // Set station location from WeatherFlow if available
     final station = widget.weatherFlowService.selectedStation;
     if (station != null) {
-      _alertService.setStationLocation(station.latitude, station.longitude);
+      alertService.setStationLocation(station.latitude, station.longitude);
     }
 
-    // Fetch alerts
-    await _alertService.fetchAlerts();
+    // Fetch alerts if not already loaded
+    if (alertService.lastFetch == null) {
+      await alertService.fetchAlerts();
+    }
 
-    // Start auto-refresh (every 5 minutes)
+    // Start auto-refresh (every 5 minutes) if not already running
     final refreshInterval = props['refreshInterval'] as int? ?? 5;
-    _alertService.startAutoRefresh(interval: Duration(minutes: refreshInterval));
+    alertService.startAutoRefresh(interval: Duration(minutes: refreshInterval));
 
-    _alertService.addListener(_onAlertsChanged);
+    alertService.addListener(_onAlertsChanged);
 
     if (mounted) {
       setState(() => _isInitialized = true);
@@ -133,8 +146,8 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
   @override
   void dispose() {
     _pulseController.dispose();
-    _alertService.removeListener(_onAlertsChanged);
-    _alertService.dispose();
+    _alertService?.removeListener(_onAlertsChanged);
+    // Don't dispose the service - it's shared via Provider
     super.dispose();
   }
 
@@ -145,14 +158,21 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
     // Update station location if changed
     final station = widget.weatherFlowService.selectedStation;
     if (station != null) {
-      _alertService.setStationLocation(station.latitude, station.longitude);
+      _alertService?.setStationLocation(station.latitude, station.longitude);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final activeAlerts = _alertService.activeAlerts;
+    final alertService = _alertService;
+
+    // Show loading if service not yet available
+    if (alertService == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final activeAlerts = alertService.activeAlerts;
     final props = widget.config.style.customProperties ?? {};
     final showCompact = props['compact'] as bool? ?? false;
     final showDescription = props['showDescription'] as bool? ?? true;
@@ -161,7 +181,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
     final showSenderName = props['showSenderName'] as bool? ?? false;
     final showTimeRange = props['showTimeRange'] as bool? ?? true;
 
-    if (!_isInitialized || _alertService.isLoading) {
+    if (!_isInitialized || alertService.isLoading) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -180,7 +200,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
       );
     }
 
-    if (_alertService.error != null && activeAlerts.isEmpty) {
+    if (alertService.error != null && activeAlerts.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -192,7 +212,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
             ),
             const SizedBox(height: 8),
             Text(
-              _alertService.error!,
+              alertService.error!,
               style: TextStyle(
                 fontSize: 12,
                 color: Colors.red.shade400,
@@ -201,7 +221,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
             ),
             const SizedBox(height: 8),
             TextButton.icon(
-              onPressed: () => _alertService.fetchAlerts(),
+              onPressed: () => alertService.fetchAlerts(),
               icon: const Icon(Icons.refresh, size: 16),
               label: const Text('Retry'),
             ),
@@ -262,7 +282,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
   }
 
   String _getLocationSourceLabel() {
-    switch (_alertService.locationSource) {
+    switch (_alertService!.locationSource) {
       case AlertLocationSource.phone:
         return 'Using phone location';
       case AlertLocationSource.station:
@@ -274,7 +294,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
 
   Widget _buildCompactView(List<NWSAlert> alerts, bool isDark) {
     final highestSeverity = alerts.first.severity;
-    final hasNew = _alertService.newAlertIds.isNotEmpty;
+    final hasNew = _alertService!.newAlertIds.isNotEmpty;
 
     return GestureDetector(
       onTap: () => _showAlertsDialog(alerts),
@@ -390,7 +410,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
               // Refresh button
               if (!widget.isEditMode)
                 InkWell(
-                  onTap: () => _alertService.fetchAlerts(),
+                  onTap: () => _alertService!.fetchAlerts(),
                   child: Icon(
                     Icons.refresh,
                     color: Colors.white.withValues(alpha: 0.8),
@@ -416,7 +436,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
             itemBuilder: (context, index) {
               final alert = alerts[index];
               final isExpanded = _expandedAlertId == alert.id;
-              final isNew = _alertService.newAlertIds.contains(alert.id);
+              final isNew = _alertService!.newAlertIds.contains(alert.id);
 
               return _buildAlertCard(
                 alert,
@@ -466,7 +486,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
             onTap: () {
               setState(() {
                 _expandedAlertId = isExpanded ? null : alert.id;
-                _alertService.markAlertSeen(alert.id);
+                _alertService!.markAlertSeen(alert.id);
               });
             },
             borderRadius: BorderRadius.circular(8),
@@ -778,6 +798,7 @@ class WeatherAlertsToolBuilder extends ToolBuilder {
     ToolConfig config,
     WeatherFlowService weatherFlowService, {
     bool isEditMode = false,
+    String? name,
   }) {
     return WeatherAlertsTool(
       config: config,

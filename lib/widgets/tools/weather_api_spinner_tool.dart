@@ -3,10 +3,13 @@
 /// Adapted from ZedDisplay architecture
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../../models/tool_config.dart';
 import '../../models/tool_definition.dart';
 import '../../services/tool_registry.dart';
 import '../../services/weatherflow_service.dart';
+import '../../services/nws_alert_service.dart';
 import '../../utils/sun_calc.dart';
 import '../forecast_spinner.dart';
 import '../forecast_models.dart';
@@ -34,7 +37,7 @@ class WeatherApiSpinnerToolBuilder implements ToolBuilder {
   }
 
   @override
-  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false}) {
+  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name}) {
     return WeatherApiSpinnerTool(
       config: config,
       weatherFlowService: weatherFlowService,
@@ -79,7 +82,8 @@ class WeatherApiSpinnerTool extends StatefulWidget {
   State<WeatherApiSpinnerTool> createState() => _WeatherApiSpinnerToolState();
 }
 
-class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool> {
+class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
+    with SingleTickerProviderStateMixin {
   List<HourlyForecast> _hourlyForecasts = [];
   SunMoonTimes? _sunMoonTimes;
   bool _isLoading = true;
@@ -89,10 +93,39 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool> {
   bool _isRefreshing = false;
   _RefreshStatus? _refreshStatus;
 
+  // Alert animation state
+  late AnimationController _alertFlashController;
+  NWSAlertService? _alertService;
+  Set<String> _acknowledgedAlertIds = {};
+
   @override
   void initState() {
     super.initState();
+    _alertFlashController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    )..repeat(reverse: true);
     _loadForecast();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_alertService == null) {
+      _alertService = context.read<NWSAlertService>();
+      _alertService!.addListener(_onAlertsChanged);
+    }
+  }
+
+  void _onAlertsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _alertFlashController.dispose();
+    _alertService?.removeListener(_onAlertsChanged);
+    super.dispose();
   }
 
   /// Get configured primary color or fall back to theme color
@@ -368,6 +401,21 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool> {
       windDirection: h.windDirection,
     )).toList();
 
+    // Check for active alerts and filter to only those currently in effect
+    final alertService = _alertService;
+    final activeAlerts = alertService?.activeAlerts ?? [];
+    final now = DateTime.now();
+    final currentlyActiveAlerts = activeAlerts.where((alert) {
+      // Check if alert is currently in effect
+      final effective = alert.effective ?? now.subtract(const Duration(days: 1));
+      final expires = alert.expires ?? alert.ends ?? now.add(const Duration(days: 1));
+      return now.isAfter(effective) && now.isBefore(expires);
+    }).toList();
+    final hasCurrentAlerts = currentlyActiveAlerts.isNotEmpty;
+    final currentHighestAlert = hasCurrentAlerts ? currentlyActiveAlerts.first : null;
+    final hasUnacknowledgedCurrentAlerts = hasCurrentAlerts &&
+        currentlyActiveAlerts.any((alert) => !_acknowledgedAlertIds.contains(alert.id));
+
     return Stack(
       children: [
         // Main spinner widget
@@ -381,6 +429,12 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool> {
           providerName: 'WeatherFlow',
           showWeatherAnimation: showAnimation,
         ),
+        // Alert badge on top (muted styling, tappable)
+        if (hasCurrentAlerts)
+          _buildAlertBadge(
+            currentHighestAlert!,
+            hasUnacknowledgedCurrentAlerts,
+          ),
         // Refresh button in top right corner (hidden in edit mode so dashboard controls are visible)
         if (!widget.isEditMode)
           Positioned(
@@ -390,6 +444,133 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool> {
           ),
       ],
     );
+  }
+
+  /// Build a small alert badge positioned in the top-right of the inner circle
+  Widget _buildAlertBadge(NWSAlert alert, bool shouldFlash) {
+    final alertColor = _getAlertColor(alert.severity);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = constraints.maxWidth < constraints.maxHeight
+            ? constraints.maxWidth
+            : constraints.maxHeight;
+        final scale = (size / 300).clamp(0.5, 1.5);
+        final outerMargin = 27.0 * scale;
+        final outerRadius = size / 2 - outerMargin;
+        final innerRadius = outerRadius * 0.72;
+
+        // Position badge at top-right of inner circle
+        // The inner circle center is at (size/2, size/2)
+        // Badge should be at roughly 45 degrees, almost touching the inner circle edge
+        final badgeSize = 36.0 * scale;
+        // Position so badge edge is ~2px inside inner circle edge
+        final badgeOffset = innerRadius - (badgeSize / 2) - (2 * scale);
+        final badgeX = size / 2 + badgeOffset * 0.707; // cos(45°)
+        final badgeY = size / 2 - badgeOffset * 0.707; // -sin(45°) for top
+
+        return Stack(
+          children: [
+            Positioned(
+              left: badgeX - badgeSize / 2,
+              top: badgeY - badgeSize / 2,
+              child: GestureDetector(
+                onTap: () {
+                  // Acknowledge all active alerts (stop flashing)
+                  setState(() {
+                    for (final a in _alertService?.activeAlerts ?? []) {
+                      _acknowledgedAlertIds.add(a.id);
+                    }
+                  });
+                },
+                child: AnimatedBuilder(
+                  animation: _alertFlashController,
+                  builder: (context, child) {
+                    // Flash between muted alert color and muted white if unacknowledged
+                    final flashValue = shouldFlash ? _alertFlashController.value : 0.0;
+                    // Muted colors - lower opacity for subtlety
+                    final bgColor = Color.lerp(
+                      alertColor.withValues(alpha: 0.5),
+                      Colors.white.withValues(alpha: 0.6),
+                      flashValue,
+                    )!;
+                    final iconColor = Color.lerp(
+                      Colors.white.withValues(alpha: 0.8),
+                      alertColor.withValues(alpha: 0.8),
+                      flashValue,
+                    )!;
+
+                    return Container(
+                      width: badgeSize,
+                      height: badgeSize,
+                      decoration: BoxDecoration(
+                        color: bgColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.5),
+                          width: 1.5 * scale,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            '!',
+                            style: TextStyle(
+                              fontSize: 14 * scale,
+                              fontWeight: FontWeight.bold,
+                              color: iconColor,
+                            ),
+                          ),
+                          SizedBox(width: 1 * scale),
+                          Icon(
+                            _getAlertIcon(alert.severity),
+                            size: 14 * scale,
+                            color: iconColor,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Get color for alert severity
+  Color _getAlertColor(AlertSeverity severity) {
+    switch (severity) {
+      case AlertSeverity.extreme:
+        return Colors.purple.shade700;
+      case AlertSeverity.severe:
+        return Colors.red.shade700;
+      case AlertSeverity.moderate:
+        return Colors.orange.shade700;
+      case AlertSeverity.minor:
+        return Colors.yellow.shade700;
+      case AlertSeverity.unknown:
+        return Colors.grey.shade600;
+    }
+  }
+
+  /// Get icon for alert severity
+  IconData _getAlertIcon(AlertSeverity severity) {
+    switch (severity) {
+      case AlertSeverity.extreme:
+        return PhosphorIcons.warning();
+      case AlertSeverity.severe:
+        return PhosphorIcons.warningCircle();
+      case AlertSeverity.moderate:
+        return PhosphorIcons.info();
+      case AlertSeverity.minor:
+        return PhosphorIcons.bellRinging();
+      case AlertSeverity.unknown:
+        return PhosphorIcons.question();
+    }
   }
 
   Widget _buildRefreshButton() {

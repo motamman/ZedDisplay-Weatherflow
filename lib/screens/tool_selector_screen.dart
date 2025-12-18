@@ -4,11 +4,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/tool_definition.dart';
-import '../models/tool_placement.dart';
 import '../models/tool_config.dart';
 import '../services/tool_registry.dart';
 import '../services/tool_service.dart';
-import '../services/dashboard_service.dart';
 
 /// Screen for selecting a tool type to add to the dashboard
 class ToolSelectorScreen extends StatelessWidget {
@@ -144,7 +142,6 @@ class ToolSelectorScreen extends StatelessWidget {
 
   Future<void> _addTool(BuildContext context, ToolDefinition definition) async {
     final toolService = context.read<ToolService>();
-    final dashboardService = context.read<DashboardService>();
     final toolRegistry = context.read<ToolRegistry>();
 
     // Get default config
@@ -161,45 +158,13 @@ class ToolSelectorScreen extends StatelessWidget {
       config: defaultConfig,
     );
 
-    // Find position for new tool
-    final activeScreen = dashboardService.currentLayout?.activeScreen;
-    if (activeScreen == null) return;
-
-    // Find an empty position (simple algorithm - first available row)
-    int row = 0;
-    int col = 0;
-    final existingPlacements = activeScreen.portraitPlacements;
-
-    // Simple grid placement - find next available slot
-    if (existingPlacements.isNotEmpty) {
-      // Find the max row used
-      int maxRow = 0;
-      for (final p in existingPlacements) {
-        final endRow = p.position.row + p.position.height;
-        if (endRow > maxRow) maxRow = endRow;
-      }
-      row = maxRow;
-    }
-
-    // Create placement
-    final placement = ToolPlacement(
-      toolId: tool.id,
-      screenId: activeScreen.id,
-      position: GridPosition(
-        row: row,
-        col: col,
-        width: definition.defaultWidth,
-        height: definition.defaultHeight,
-      ),
-    );
-
-    await dashboardService.addPlacement(placement);
-
     if (context.mounted) {
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added ${definition.name}')),
-      );
+      // Return tool and size for drag-to-place in dashboard
+      Navigator.of(context).pop({
+        'tool': tool,
+        'width': definition.defaultWidth,
+        'height': definition.defaultHeight,
+      });
     }
   }
 }

@@ -13,7 +13,8 @@ abstract class ToolBuilder {
 
   /// Build a widget instance with the given configuration
   /// [isEditMode] indicates if the dashboard is in edit mode (tool should hide its own controls)
-  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false});
+  /// [name] is the user-configured display name for this tool instance
+  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name});
 
   /// Get default config for this tool type (optional)
   ToolConfig? getDefaultConfig() => null;
@@ -35,7 +36,8 @@ class ToolRegistry extends ChangeNotifier {
 
   /// Build a tool widget from configuration
   /// [isEditMode] is passed to the tool widget so it can hide its own controls
-  Widget buildTool(String toolTypeId, ToolConfig config, WeatherFlowService service, {bool isEditMode = false}) {
+  /// [name] is the user-configured display name for this tool instance
+  Widget buildTool(String toolTypeId, ToolConfig config, WeatherFlowService service, {bool isEditMode = false, String? name}) {
     final builder = _builders[toolTypeId];
     if (builder == null) {
       return Center(
@@ -45,7 +47,7 @@ class ToolRegistry extends ChangeNotifier {
         ),
       );
     }
-    return builder.build(config, service, isEditMode: isEditMode);
+    return builder.build(config, service, isEditMode: isEditMode, name: name);
   }
 
   /// Get definition for a tool type

@@ -284,68 +284,71 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Style Configuration
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Appearance',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Color picker
-                  if (definition?.configSchema.allowsColorCustomization ?? true)
-                    ListTile(
-                      leading: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: _primaryColor != null && _primaryColor!.isNotEmpty
-                              ? () {
-                                  try {
-                                    final hexColor = _primaryColor!.replaceAll('#', '');
-                                    return Color(int.parse('FF$hexColor', radix: 16));
-                                  } catch (e) {
-                                    return Colors.blue;
-                                  }
-                                }()
-                              : Colors.blue,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey.shade400, width: 2),
-                        ),
-                      ),
-                      title: const Text('Primary Color'),
-                      subtitle: Text(_primaryColor ?? 'Default (Blue)'),
-                      trailing: const Icon(Icons.edit),
-                      onTap: _selectColor,
+          // Style Configuration - only show for tools that use these options
+          // Complex widgets like weatherflow_forecast have their own section toggles
+          if (!_isComplexWidget(widget.tool.toolTypeId)) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Appearance',
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                  const SizedBox(height: 8),
+                    const SizedBox(height: 16),
 
-                  // Show/Hide Options
-                  SwitchListTile(
-                    title: const Text('Show Label'),
-                    value: _showLabel,
-                    onChanged: (value) => setState(() => _showLabel = value),
-                  ),
-                  SwitchListTile(
-                    title: const Text('Show Value'),
-                    value: _showValue,
-                    onChanged: (value) => setState(() => _showValue = value),
-                  ),
-                  SwitchListTile(
-                    title: const Text('Show Unit'),
-                    value: _showUnit,
-                    onChanged: (value) => setState(() => _showUnit = value),
-                  ),
-                ],
+                    // Color picker
+                    if (definition?.configSchema.allowsColorCustomization ?? true)
+                      ListTile(
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: _primaryColor != null && _primaryColor!.isNotEmpty
+                                ? () {
+                                    try {
+                                      final hexColor = _primaryColor!.replaceAll('#', '');
+                                      return Color(int.parse('FF$hexColor', radix: 16));
+                                    } catch (e) {
+                                      return Colors.blue;
+                                    }
+                                  }()
+                                : Colors.blue,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.grey.shade400, width: 2),
+                          ),
+                        ),
+                        title: const Text('Primary Color'),
+                        subtitle: Text(_primaryColor ?? 'Default (Blue)'),
+                        trailing: const Icon(Icons.edit),
+                        onTap: _selectColor,
+                      ),
+                    const SizedBox(height: 8),
+
+                    // Show/Hide Options
+                    SwitchListTile(
+                      title: const Text('Show Label'),
+                      value: _showLabel,
+                      onChanged: (value) => setState(() => _showLabel = value),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Show Value'),
+                      value: _showValue,
+                      onChanged: (value) => setState(() => _showValue = value),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Show Unit'),
+                      value: _showUnit,
+                      onChanged: (value) => setState(() => _showUnit = value),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 16),
+            const SizedBox(height: 16),
+          ],
 
           // Tool-specific settings
           _buildToolSpecificSettings(definition),
@@ -471,6 +474,15 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
         ],
       ),
     );
+  }
+
+  /// Check if this tool type is a complex widget that doesn't use simple
+  /// label/value/unit display options - it has its own section controls instead
+  bool _isComplexWidget(String toolTypeId) {
+    return const [
+      'weatherflow_forecast',
+      'weather_alerts',
+    ].contains(toolTypeId);
   }
 
   Widget _buildToolSpecificSettings(ToolDefinition? definition) {
@@ -924,6 +936,12 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
     final station = weatherFlow.selectedStation;
     final sensorDevices = station?.sensorDevices ?? [];
 
+    // Section visibility
+    final showTitle = _customProperties['showTitle'] as bool? ?? true;
+    final showSunMoonArc = _customProperties['showSunMoonArc'] as bool? ?? true;
+    final showCurrentConditions = _customProperties['showCurrentConditions'] as bool? ?? true;
+    final showDailyForecast = _customProperties['showDailyForecast'] as bool? ?? true;
+
     // Display options
     final use24HourFormat = _customProperties['use24HourFormat'] as bool? ?? false;
 
@@ -969,6 +987,57 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Section Visibility
+            Text(
+              'Sections',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Choose which sections to display in the widget',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              title: const Text('Title'),
+              subtitle: Text('Show "${_name}" as widget header'),
+              secondary: const Icon(Icons.title_outlined),
+              value: showTitle,
+              onChanged: (value) {
+                setState(() => _customProperties['showTitle'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Sun/Moon Arc'),
+              subtitle: const Text('Show day/night arc with sunrise/sunset'),
+              secondary: const Icon(Icons.wb_sunny_outlined),
+              value: showSunMoonArc,
+              onChanged: (value) {
+                setState(() => _customProperties['showSunMoonArc'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Current Conditions'),
+              subtitle: const Text('Show live temperature, humidity, wind, etc.'),
+              secondary: const Icon(Icons.thermostat_outlined),
+              value: showCurrentConditions,
+              onChanged: (value) {
+                setState(() => _customProperties['showCurrentConditions'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Daily Forecast'),
+              subtitle: const Text('Show multi-day weather forecast'),
+              secondary: const Icon(Icons.calendar_today_outlined),
+              value: showDailyForecast,
+              onChanged: (value) {
+                setState(() => _customProperties['showDailyForecast'] = value);
+              },
+            ),
+            const SizedBox(height: 8),
+            const Divider(),
+            const SizedBox(height: 16),
+
             // Time Format Option
             Text(
               'Display Options',
