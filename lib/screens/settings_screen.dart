@@ -432,7 +432,7 @@ class _UdpSettingsSectionState extends State<_UdpSettingsSection> {
             if (value) {
               await weatherFlow.startUdp();
             } else {
-              weatherFlow.stopUdp();
+              await weatherFlow.stopUdp();
             }
           },
         ),

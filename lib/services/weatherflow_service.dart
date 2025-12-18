@@ -439,8 +439,13 @@ class WeatherFlowService extends ChangeNotifier {
   }
 
   /// Stop UDP listener (can be called from settings)
-  void stopUdp() {
+  /// Fetches fresh data from REST to replace stale UDP observation
+  Future<void> stopUdp() async {
     _disconnectUdp();
+    // Refresh from REST to replace the cached UDP observation
+    if (_selectedStation != null) {
+      await _fetchObservation(_selectedStation!.stationId);
+    }
     notifyListeners();
   }
 
