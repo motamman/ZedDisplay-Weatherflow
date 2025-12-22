@@ -326,6 +326,11 @@ flutter build windows
   - Expand hourly forecast below clicked day
 
 ### Planned
+- **WearOS Integration**
+  - Companion watch app with ported tools
+  - Settings managed from phone app
+  - Watch face complications
+
 - **History Charts Tool**
   - Time-series charts for wind, temperature, pressure, etc.
   - Configurable time ranges (1h, 6h, 24h, 7d)
