@@ -413,6 +413,11 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
       'weatherflow_forecast',
       'weather_alerts',
       'weather_api_spinner',
+      'forecast_chart',
+      'solar_radiation',
+      'sun_moon_arc',
+      'history_chart',
+      'conditions_dashboard',
     ].contains(toolTypeId);
   }
 
@@ -431,6 +436,16 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
         return _buildForecastSettings();
       case 'weather_alerts':
         return _buildWeatherAlertsSettings();
+      case 'forecast_chart':
+        return _buildForecastChartSettings();
+      case 'solar_radiation':
+        return _buildSolarRadiationSettings();
+      case 'sun_moon_arc':
+        return _buildSunMoonArcSettings();
+      case 'history_chart':
+        return const SizedBox.shrink(); // Stub - no settings
+      case 'conditions_dashboard':
+        return _buildConditionsDashboardSettings();
       default:
         return const SizedBox.shrink();
     }
@@ -1267,6 +1282,586 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
                 },
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildForecastChartSettings() {
+    final dataElement = _customProperties['dataElement'] as String? ?? 'temperature';
+    final chartMode = _customProperties['chartMode'] as String? ?? 'combo';
+    final chartStyle = _customProperties['chartStyle'] as String? ?? 'spline';
+    final forecastDays = _customProperties['forecastDays'] as int? ?? 3;
+    final showGrid = _customProperties['showGrid'] as bool? ?? true;
+    final showLegend = _customProperties['showLegend'] as bool? ?? true;
+    final showDataPoints = _customProperties['showDataPoints'] as bool? ?? false;
+
+    // Data elements depend on chart mode
+    final isHourly = chartMode == 'hourly';
+    final isCombo = chartMode == 'combo';
+
+    final hourlyElements = {
+      'temperature': 'Temperature',
+      'feels_like': 'Feels Like',
+      'precipitation_probability': 'Precip Probability',
+      'humidity': 'Humidity',
+      'pressure': 'Pressure',
+      'wind_speed': 'Wind Speed',
+    };
+
+    final dailyElements = {
+      'temperature_high': 'Temperature (High)',
+      'temperature_low': 'Temperature (Low)',
+      'temperature_range': 'Temperature Range',
+      'precipitation_probability': 'Precip Probability',
+    };
+
+    final dataElements = (isHourly || isCombo) ? hourlyElements : dailyElements;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Forecast Chart Settings',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 16),
+
+            // Chart Mode
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(
+                labelText: 'Chart Mode',
+                border: OutlineInputBorder(),
+              ),
+              value: chartMode,
+              items: const [
+                DropdownMenuItem(value: 'combo', child: Text('Combo (Daily + Range)')),
+                DropdownMenuItem(value: 'hourly', child: Text('Hourly')),
+                DropdownMenuItem(value: 'daily', child: Text('Daily')),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _customProperties['chartMode'] = value;
+                  // Reset data element if switching modes
+                  if (value == 'daily' && !dailyElements.containsKey(dataElement)) {
+                    _customProperties['dataElement'] = 'temperature_high';
+                  } else if ((value == 'hourly' || value == 'combo') && !hourlyElements.containsKey(dataElement)) {
+                    _customProperties['dataElement'] = 'temperature';
+                  }
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+
+            // Data Element
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(
+                labelText: 'Data Element',
+                border: OutlineInputBorder(),
+              ),
+              value: dataElements.containsKey(dataElement) ? dataElement : dataElements.keys.first,
+              items: dataElements.entries
+                  .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                  .toList(),
+              onChanged: (value) {
+                setState(() => _customProperties['dataElement'] = value);
+              },
+            ),
+            const SizedBox(height: 12),
+
+            // Chart Style (only for non-combo modes)
+            if (chartMode != 'combo')
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Chart Style',
+                  border: OutlineInputBorder(),
+                ),
+                value: chartStyle,
+                items: const [
+                  DropdownMenuItem(value: 'spline', child: Text('Line')),
+                  DropdownMenuItem(value: 'splineFilled', child: Text('Filled Line')),
+                  DropdownMenuItem(value: 'bar', child: Text('Bar Chart')),
+                ],
+                onChanged: (value) {
+                  setState(() => _customProperties['chartStyle'] = value);
+                },
+              ),
+            if (chartMode != 'combo') const SizedBox(height: 12),
+
+            // Forecast Days
+            DropdownButtonFormField<int>(
+              decoration: const InputDecoration(
+                labelText: 'Forecast Days',
+                border: OutlineInputBorder(),
+              ),
+              value: forecastDays,
+              items: const [
+                DropdownMenuItem(value: 1, child: Text('1 day')),
+                DropdownMenuItem(value: 2, child: Text('2 days')),
+                DropdownMenuItem(value: 3, child: Text('3 days')),
+                DropdownMenuItem(value: 5, child: Text('5 days')),
+                DropdownMenuItem(value: 7, child: Text('7 days')),
+                DropdownMenuItem(value: 10, child: Text('10 days')),
+              ],
+              onChanged: (value) {
+                setState(() => _customProperties['forecastDays'] = value);
+              },
+            ),
+
+            const Divider(height: 24),
+
+            // Display Options
+            SwitchListTile(
+              title: const Text('Show Grid'),
+              value: showGrid,
+              onChanged: (value) {
+                setState(() => _customProperties['showGrid'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Show Legend'),
+              value: showLegend,
+              onChanged: (value) {
+                setState(() => _customProperties['showLegend'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Show Data Points'),
+              value: showDataPoints,
+              onChanged: (value) {
+                setState(() => _customProperties['showDataPoints'] = value);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSolarRadiationSettings() {
+    final showBarChart = _customProperties['showBarChart'] as bool? ?? true;
+    final showDailyTotal = _customProperties['showDailyTotal'] as bool? ?? true;
+    final showCurrentPower = _customProperties['showCurrentPower'] as bool? ?? true;
+    final showDailyView = _customProperties['showDailyView'] as bool? ?? true;
+    final dailyViewMode = _customProperties['dailyViewMode'] as String? ?? 'cards';
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Solar Radiation Settings',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Shows estimated solar panel output based on forecast irradiance data.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+
+            // Display Sections
+            SwitchListTile(
+              title: const Text('Show Hourly Chart'),
+              subtitle: const Text('Power output throughout the day'),
+              value: showBarChart,
+              onChanged: (value) {
+                setState(() => _customProperties['showBarChart'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Show Daily Total'),
+              subtitle: const Text('Estimated kWh in header'),
+              value: showDailyTotal,
+              onChanged: (value) {
+                setState(() => _customProperties['showDailyTotal'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Show Current Power'),
+              subtitle: const Text('Real-time output when viewing today'),
+              value: showCurrentPower,
+              onChanged: (value) {
+                setState(() => _customProperties['showCurrentPower'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Show Daily View'),
+              subtitle: const Text('Multi-day forecast section'),
+              value: showDailyView,
+              onChanged: (value) {
+                setState(() => _customProperties['showDailyView'] = value);
+              },
+            ),
+
+            if (showDailyView) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Daily View Style',
+                  border: OutlineInputBorder(),
+                ),
+                value: dailyViewMode,
+                items: const [
+                  DropdownMenuItem(value: 'cards', child: Text('Scrollable Cards')),
+                  DropdownMenuItem(value: 'chart', child: Text('Bar Chart')),
+                ],
+                onChanged: (value) {
+                  setState(() => _customProperties['dailyViewMode'] = value);
+                },
+              ),
+            ],
+
+            const Divider(height: 24),
+
+            // Note about panel config
+            Text(
+              'Panel capacity is configured in Settings → Solar Panel.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSunMoonArcSettings() {
+    final showTitle = _customProperties['showTitle'] as bool? ?? false;
+    final arcStyle = _customProperties['arcStyle'] as String? ?? 'half';
+    final use24HourFormat = _customProperties['use24HourFormat'] as bool? ?? false;
+    final showTimeLabels = _customProperties['showTimeLabels'] as bool? ?? true;
+    final showSunMarkers = _customProperties['showSunMarkers'] as bool? ?? true;
+    final showMoonMarkers = _customProperties['showMoonMarkers'] as bool? ?? true;
+    final showTwilightSegments = _customProperties['showTwilightSegments'] as bool? ?? true;
+    final showCenterIndicator = _customProperties['showCenterIndicator'] as bool? ?? true;
+    final showSecondaryIcons = _customProperties['showSecondaryIcons'] as bool? ?? true;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Sun/Moon Arc Settings',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 16),
+
+            // Arc Style
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(
+                labelText: 'Arc Style',
+                border: OutlineInputBorder(),
+              ),
+              value: arcStyle,
+              items: const [
+                DropdownMenuItem(value: 'half', child: Text('Half Circle (180°)')),
+                DropdownMenuItem(value: 'threeQuarter', child: Text('Three Quarter (270°)')),
+                DropdownMenuItem(value: 'wide', child: Text('Wide Arc (240°)')),
+                DropdownMenuItem(value: 'full', child: Text('Full Circle (360°)')),
+              ],
+              onChanged: (value) {
+                setState(() => _customProperties['arcStyle'] = value);
+              },
+            ),
+
+            const Divider(height: 24),
+
+            // Display Options
+            SwitchListTile(
+              title: const Text('Show Title'),
+              subtitle: Text('Display "${_name}" as header'),
+              value: showTitle,
+              onChanged: (value) {
+                setState(() => _customProperties['showTitle'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('24-Hour Format'),
+              subtitle: const Text('Use 14:30 instead of 2:30 PM'),
+              value: use24HourFormat,
+              onChanged: (value) {
+                setState(() => _customProperties['use24HourFormat'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Show Time Labels'),
+              subtitle: const Text('Sunrise/sunset times on arc'),
+              value: showTimeLabels,
+              onChanged: (value) {
+                setState(() => _customProperties['showTimeLabels'] = value);
+              },
+            ),
+
+            const Divider(height: 16),
+            Text(
+              'Markers & Indicators',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+
+            SwitchListTile(
+              title: const Text('Sun Markers'),
+              subtitle: const Text('Sunrise and sunset icons'),
+              value: showSunMarkers,
+              onChanged: (value) {
+                setState(() => _customProperties['showSunMarkers'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Moon Markers'),
+              subtitle: const Text('Moonrise and moonset icons'),
+              value: showMoonMarkers,
+              onChanged: (value) {
+                setState(() => _customProperties['showMoonMarkers'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Twilight Segments'),
+              subtitle: const Text('Color-coded dawn/dusk regions'),
+              value: showTwilightSegments,
+              onChanged: (value) {
+                setState(() => _customProperties['showTwilightSegments'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Center Indicator'),
+              subtitle: const Text('Current sun position marker'),
+              value: showCenterIndicator,
+              onChanged: (value) {
+                setState(() => _customProperties['showCenterIndicator'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Secondary Icons'),
+              subtitle: const Text('Dawn, dusk, golden hour markers'),
+              value: showSecondaryIcons,
+              onChanged: (value) {
+                setState(() => _customProperties['showSecondaryIcons'] = value);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConditionsDashboardSettings() {
+    final showTitle = _customProperties['showTitle'] as bool? ?? true;
+    final cardSize = _customProperties['cardSize'] as String? ?? 'normal';
+    final showIndicators = _customProperties['showIndicators'] as bool? ?? true;
+    final columns = _customProperties['columns'] as int? ?? 4;
+
+    // Variable visibility
+    final showTemperature = _customProperties['showTemperature'] as bool? ?? true;
+    final showFeelsLike = _customProperties['showFeelsLike'] as bool? ?? true;
+    final showHumidity = _customProperties['showHumidity'] as bool? ?? true;
+    final showPressure = _customProperties['showPressure'] as bool? ?? true;
+    final showWindSpeed = _customProperties['showWindSpeed'] as bool? ?? true;
+    final showWindGust = _customProperties['showWindGust'] as bool? ?? true;
+    final showRainRate = _customProperties['showRainRate'] as bool? ?? true;
+    final showRainAccumulated = _customProperties['showRainAccumulated'] as bool? ?? true;
+    final showUvIndex = _customProperties['showUvIndex'] as bool? ?? true;
+    final showSolarRadiation = _customProperties['showSolarRadiation'] as bool? ?? true;
+    final showLightning = _customProperties['showLightning'] as bool? ?? true;
+    final showBattery = _customProperties['showBattery'] as bool? ?? true;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Conditions Dashboard Settings',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tap any card to view historical charts and forecast.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+
+            // Display Options
+            SwitchListTile(
+              title: const Text('Show Title'),
+              subtitle: Text('Display "${_name}" as header'),
+              value: showTitle,
+              onChanged: (value) {
+                setState(() => _customProperties['showTitle'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Show Indicators'),
+              subtitle: const Text('Progress bars on cards'),
+              value: showIndicators,
+              onChanged: (value) {
+                setState(() => _customProperties['showIndicators'] = value);
+              },
+            ),
+
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(
+                labelText: 'Card Size',
+                border: OutlineInputBorder(),
+              ),
+              value: cardSize,
+              items: const [
+                DropdownMenuItem(value: 'compact', child: Text('Compact')),
+                DropdownMenuItem(value: 'normal', child: Text('Normal')),
+              ],
+              onChanged: (value) {
+                setState(() => _customProperties['cardSize'] = value);
+              },
+            ),
+
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              decoration: const InputDecoration(
+                labelText: 'Columns',
+                border: OutlineInputBorder(),
+              ),
+              value: columns,
+              items: const [
+                DropdownMenuItem(value: 2, child: Text('2 columns')),
+                DropdownMenuItem(value: 3, child: Text('3 columns')),
+                DropdownMenuItem(value: 4, child: Text('4 columns')),
+                DropdownMenuItem(value: 5, child: Text('5 columns')),
+                DropdownMenuItem(value: 6, child: Text('6 columns')),
+              ],
+              onChanged: (value) {
+                setState(() => _customProperties['columns'] = value);
+              },
+            ),
+
+            const Divider(height: 24),
+
+            // Variable Visibility
+            Text(
+              'Variables to Display',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+
+            SwitchListTile(
+              title: const Text('Temperature'),
+              dense: true,
+              value: showTemperature,
+              onChanged: (value) {
+                setState(() => _customProperties['showTemperature'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Feels Like'),
+              dense: true,
+              value: showFeelsLike,
+              onChanged: (value) {
+                setState(() => _customProperties['showFeelsLike'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Humidity'),
+              dense: true,
+              value: showHumidity,
+              onChanged: (value) {
+                setState(() => _customProperties['showHumidity'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Pressure'),
+              dense: true,
+              value: showPressure,
+              onChanged: (value) {
+                setState(() => _customProperties['showPressure'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Wind Speed'),
+              dense: true,
+              value: showWindSpeed,
+              onChanged: (value) {
+                setState(() => _customProperties['showWindSpeed'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Wind Gust'),
+              dense: true,
+              value: showWindGust,
+              onChanged: (value) {
+                setState(() => _customProperties['showWindGust'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Rain Rate'),
+              dense: true,
+              value: showRainRate,
+              onChanged: (value) {
+                setState(() => _customProperties['showRainRate'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Rain Accumulated'),
+              dense: true,
+              value: showRainAccumulated,
+              onChanged: (value) {
+                setState(() => _customProperties['showRainAccumulated'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('UV Index'),
+              dense: true,
+              value: showUvIndex,
+              onChanged: (value) {
+                setState(() => _customProperties['showUvIndex'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Solar Radiation'),
+              dense: true,
+              value: showSolarRadiation,
+              onChanged: (value) {
+                setState(() => _customProperties['showSolarRadiation'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Lightning'),
+              dense: true,
+              value: showLightning,
+              onChanged: (value) {
+                setState(() => _customProperties['showLightning'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Battery'),
+              dense: true,
+              value: showBattery,
+              onChanged: (value) {
+                setState(() => _customProperties['showBattery'] = value);
+              },
+            ),
+
+            const Divider(height: 16),
+
+            // Note about units
+            Text(
+              'Units are configured globally in Settings',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
           ],
         ),
       ),

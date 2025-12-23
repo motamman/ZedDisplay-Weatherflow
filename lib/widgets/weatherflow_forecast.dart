@@ -264,6 +264,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           'Temp',
           Colors.orange,
           isDark,
+          widget.tempSource,
         ),
         _buildConditionItem(
           context,
@@ -272,6 +273,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           'Humidity',
           Colors.cyan,
           isDark,
+          widget.humiditySource,
         ),
         _buildConditionItem(
           context,
@@ -280,6 +282,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           '${widget.rainUnit} 1h/day',
           Colors.blue,
           isDark,
+          widget.rainSource,
         ),
         _buildConditionItem(
           context,
@@ -288,6 +291,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           widget.pressureUnit,
           Colors.purple,
           isDark,
+          widget.pressureSource,
         ),
         _buildConditionItem(
           context,
@@ -300,6 +304,7 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           widget.windUnit,
           Colors.teal,
           isDark,
+          widget.windSource,
           subtitle2: widget.currentWindDirection != null ? _getWindDirectionLabel(widget.currentWindDirection!) : null,
         ),
       ],
@@ -312,13 +317,25 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
     String value,
     String label,
     Color color,
-    bool isDark, {
+    bool isDark,
+    ConditionDataSource source, {
     String? subtitle2,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, color: color, size: 20),
+        // Data source indicator dot
+        if (source != ConditionDataSource.none)
+          Container(
+            width: 6,
+            height: 6,
+            margin: const EdgeInsets.only(top: 2),
+            decoration: BoxDecoration(
+              color: source.color,
+              shape: BoxShape.circle,
+            ),
+          ),
         const SizedBox(height: 4),
         Text(
           value,

@@ -153,10 +153,10 @@ class DailyForecast {
       conditions: json['conditions'] as String?,
       icon: json['icon'] as String?,
       sunrise: json['sunrise'] != null
-          ? DateTime.fromMillisecondsSinceEpoch((json['sunrise'] as int) * 1000)
+          ? DateTime.fromMillisecondsSinceEpoch((json['sunrise'] as num).toInt() * 1000)
           : null,
       sunset: json['sunset'] != null
-          ? DateTime.fromMillisecondsSinceEpoch((json['sunset'] as int) * 1000)
+          ? DateTime.fromMillisecondsSinceEpoch((json['sunset'] as num).toInt() * 1000)
           : null,
     );
   }
@@ -238,7 +238,7 @@ class CurrentConditions {
           : null,
       uvIndex: (json['uv'] as num?)?.toDouble(),
       solarRadiation: (json['solar_radiation'] as num?)?.toDouble(),
-      brightness: json['brightness'] as int?,
+      brightness: (json['brightness'] as num?)?.toInt(),
       conditions: json['conditions'] as String?,
       icon: json['icon'] as String?,
       isDay: json['is_day'] as bool? ?? true,

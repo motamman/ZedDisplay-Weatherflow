@@ -101,6 +101,9 @@ class WeatherFlowService extends ChangeNotifier {
   /// All device observations (keyed by serial number)
   Map<String, Observation> get deviceObservations => Map.unmodifiable(_deviceObservations);
 
+  /// API client for external access (e.g., history service)
+  WeatherFlowApi? get api => _api;
+
   // ============ Spinner Compatibility Getters ============
 
   /// Whether a refresh is in progress
@@ -139,6 +142,41 @@ class WeatherFlowService extends ChangeNotifier {
 
   /// Get observation for a specific device by serial number
   Observation? getDeviceObservation(String serialNumber) => _deviceObservations[serialNumber];
+
+  /// Get device ID for a serial number
+  int? getDeviceId(String serialNumber) {
+    final device = _selectedStation?.devices.firstWhere(
+      (d) => d.serialNumber == serialNumber,
+      orElse: () => Device(deviceId: 0, serialNumber: '', deviceType: ''),
+    );
+    return device?.deviceId != 0 ? device?.deviceId : null;
+  }
+
+  /// Get historical observations for a device by serial number
+  /// Returns null if API not available or device not found
+  Future<List<Observation>?> getDeviceHistory({
+    required String serialNumber,
+    int? dayOffset,
+    DateTime? startTime,
+    DateTime? endTime,
+  }) async {
+    if (_api == null) return null;
+
+    final deviceId = getDeviceId(serialNumber);
+    if (deviceId == null) return null;
+
+    try {
+      return await _api!.getDeviceObservations(
+        deviceId,
+        dayOffset: dayOffset,
+        startTime: startTime,
+        endTime: endTime,
+      );
+    } catch (e) {
+      debugPrint('WeatherFlowService: Error fetching device history: $e');
+      return null;
+    }
+  }
 
   /// Get observation for a specific device type (ST, AR, SK)
   /// Returns the first matching device observation

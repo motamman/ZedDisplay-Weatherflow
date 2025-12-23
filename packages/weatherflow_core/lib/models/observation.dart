@@ -90,7 +90,7 @@ class Observation {
   ///          rainCheck2, localDayFinalRainAccum]
   factory Observation.fromUdpTempest(List<dynamic> obs, int deviceId) {
     return Observation(
-      timestamp: DateTime.fromMillisecondsSinceEpoch((obs[0] as int) * 1000),
+      timestamp: DateTime.fromMillisecondsSinceEpoch((obs[0] as num).toInt() * 1000),
       deviceId: deviceId,
       source: ObservationSource.udp,
       windLull: (obs[1] as num?)?.toDouble(),
@@ -104,11 +104,11 @@ class Observation {
       uvIndex: (obs[9] as num?)?.toDouble(),
       solarRadiation: (obs[10] as num?)?.toDouble(),
       rainAccumulated: obs[11] != null ? (obs[11] as num).toDouble() / 1000 : null, // mm to m
-      precipType: _parsePrecipType(obs[12] as int?),
+      precipType: _parsePrecipType((obs[12] as num?)?.toInt()),
       lightningDistance: obs[13] != null ? (obs[13] as num).toDouble() * 1000 : null, // km to m
-      lightningCount: obs[14] as int?,
+      lightningCount: (obs[14] as num?)?.toInt(),
       batteryVoltage: (obs[15] as num?)?.toDouble(),
-      reportInterval: obs[16] as int?,
+      reportInterval: (obs[16] as num?)?.toInt(),
     );
   }
 
@@ -116,7 +116,7 @@ class Observation {
   /// Format: [epoch, windSpeed, windDirection]
   factory Observation.fromUdpRapidWind(List<dynamic> obs, int deviceId) {
     return Observation(
-      timestamp: DateTime.fromMillisecondsSinceEpoch((obs[0] as int) * 1000),
+      timestamp: DateTime.fromMillisecondsSinceEpoch((obs[0] as num).toInt() * 1000),
       deviceId: deviceId,
       source: ObservationSource.udp,
       windAvg: (obs[1] as num?)?.toDouble(),
@@ -139,7 +139,7 @@ class Observation {
     final data = obs[0] as List;
 
     return Observation(
-      timestamp: DateTime.fromMillisecondsSinceEpoch((data[0] as int) * 1000),
+      timestamp: DateTime.fromMillisecondsSinceEpoch((data[0] as num).toInt() * 1000),
       deviceId: deviceId,
       source: ObservationSource.rest,
       windLull: (data[1] as num?)?.toDouble(),
@@ -153,11 +153,11 @@ class Observation {
       uvIndex: (data[10] as num?)?.toDouble(),
       solarRadiation: (data[11] as num?)?.toDouble(),
       rainAccumulated: data[12] != null ? (data[12] as num).toDouble() / 1000 : null, // mm to m
-      precipType: _parsePrecipType(data[13] as int?),
-      lightningCount: data[14] as int?,
+      precipType: _parsePrecipType((data[13] as num?)?.toInt()),
+      lightningCount: (data[14] as num?)?.toInt(),
       lightningDistance: data[15] != null ? (data[15] as num).toDouble() * 1000 : null, // km to m
       batteryVoltage: (data[16] as num?)?.toDouble(),
-      reportInterval: data[17] as int?,
+      reportInterval: (data[17] as num?)?.toInt(),
       // Calculated values from summary
       feelsLike: json['summary']?['feels_like'] != null
           ? (json['summary']['feels_like'] as num).toDouble() + 273.15
@@ -193,7 +193,7 @@ class Observation {
     final data = obs[0] as List;
 
     return Observation(
-      timestamp: DateTime.fromMillisecondsSinceEpoch((data[0] as int) * 1000),
+      timestamp: DateTime.fromMillisecondsSinceEpoch((data[0] as num).toInt() * 1000),
       deviceId: deviceId,
       source: ObservationSource.websocket,
       windLull: (data[1] as num?)?.toDouble(),
@@ -207,11 +207,11 @@ class Observation {
       uvIndex: (data[10] as num?)?.toDouble(),
       solarRadiation: (data[11] as num?)?.toDouble(),
       rainAccumulated: data[12] != null ? (data[12] as num).toDouble() / 1000 : null, // mm to m
-      precipType: _parsePrecipType(data[13] as int?),
-      lightningCount: data[14] as int?,
+      precipType: _parsePrecipType((data[13] as num?)?.toInt()),
+      lightningCount: (data[14] as num?)?.toInt(),
       lightningDistance: data[15] != null ? (data[15] as num).toDouble() * 1000 : null, // km to m
       batteryVoltage: (data[16] as num?)?.toDouble(),
-      reportInterval: data[17] as int?,
+      reportInterval: (data[17] as num?)?.toInt(),
     );
   }
 
@@ -292,7 +292,7 @@ class LightningStrike {
   factory LightningStrike.fromUdp(Map<String, dynamic> json) {
     final evt = json['evt'] as List;
     return LightningStrike(
-      timestamp: DateTime.fromMillisecondsSinceEpoch((evt[0] as int) * 1000),
+      timestamp: DateTime.fromMillisecondsSinceEpoch((evt[0] as num).toInt() * 1000),
       deviceId: json['device_id'] as int? ?? 0,
       distance: (evt[1] as num).toDouble() * 1000, // km to m
       energy: (evt[2] as num).toDouble(),
@@ -313,7 +313,7 @@ class RainStartEvent {
   factory RainStartEvent.fromUdp(Map<String, dynamic> json) {
     final evt = json['evt'] as List;
     return RainStartEvent(
-      timestamp: DateTime.fromMillisecondsSinceEpoch((evt[0] as int) * 1000),
+      timestamp: DateTime.fromMillisecondsSinceEpoch((evt[0] as num).toInt() * 1000),
       deviceId: json['device_id'] as int? ?? 0,
     );
   }

@@ -61,7 +61,7 @@ class WeatherFlowApi {
     if (response.statusCode == 200) {
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       // Get device_id from response
-      final deviceId = json['station_id'] as int? ?? stationId;
+      final deviceId = (json['station_id'] as num?)?.toInt() ?? stationId;
       return Observation.fromRestStation(json, deviceId);
     } else {
       throw WeatherFlowApiException(
