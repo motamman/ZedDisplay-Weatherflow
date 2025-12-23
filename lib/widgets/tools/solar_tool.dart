@@ -39,6 +39,7 @@ class SolarToolBuilder implements ToolBuilder {
     WeatherFlowService weatherFlowService, {
     bool isEditMode = false,
     String? name,
+    void Function(ToolConfig)? onConfigChanged,
   }) {
     return SolarTool(
       config: config,

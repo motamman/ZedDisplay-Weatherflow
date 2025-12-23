@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:weatherflow_core/weatherflow_core.dart';
 import '../services/storage_service.dart';
 import '../services/weatherflow_service.dart';
+import '../services/websocket_service.dart';
+import '../widgets/config_export_dialog.dart';
+import '../widgets/config_import_dialog.dart';
 import 'setup_wizard_screen.dart';
 import 'activity_list_screen.dart';
 
@@ -106,6 +109,7 @@ class SettingsScreen extends StatelessWidget {
 
           // Data Refresh
           _buildSectionHeader(context, 'Data'),
+          const _ConnectionStatusSection(),
           ListTile(
             title: const Text('Auto-refresh Interval'),
             subtitle: Text('${storage.refreshInterval} minutes'),
@@ -143,6 +147,31 @@ class SettingsScreen extends StatelessWidget {
                   builder: (_) => const ActivityListScreen(),
                 ),
               );
+            },
+          ),
+          const Divider(),
+
+          // Configuration
+          _buildSectionHeader(context, 'Configuration'),
+          ListTile(
+            title: const Text('Export Configuration'),
+            subtitle: const Text('Share or backup your settings'),
+            leading: const Icon(Icons.file_upload_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => ConfigExportDialog.show(context),
+          ),
+          ListTile(
+            title: const Text('Import Configuration'),
+            subtitle: const Text('Restore from backup file'),
+            leading: const Icon(Icons.file_download_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final imported = await ConfigImportDialog.pickAndShow(context);
+              if (imported && context.mounted) {
+                // Refresh weather service after import
+                final weatherFlow = context.read<WeatherFlowService>();
+                await weatherFlow.forceRefresh();
+              }
             },
           ),
           const Divider(),
@@ -364,6 +393,190 @@ class SettingsScreen extends StatelessWidget {
             child: const Text('Sign Out'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Connection status indicators
+class _ConnectionStatusSection extends StatelessWidget {
+  const _ConnectionStatusSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final weatherFlow = context.watch<WeatherFlowService>();
+    final observation = weatherFlow.currentObservation;
+    final connectionType = weatherFlow.connectionType;
+    final websocket = weatherFlow.websocketService;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Determine WebSocket status
+    String wsStatus;
+    Color wsColor;
+    IconData wsIcon;
+
+    if (websocket == null) {
+      wsStatus = 'Not initialized';
+      wsColor = Colors.grey;
+      wsIcon = Icons.cloud_off;
+    } else if (websocket.isConnected) {
+      final lastMsg = websocket.lastMessageAt;
+      if (lastMsg != null) {
+        final ago = DateTime.now().difference(lastMsg);
+        if (ago.inSeconds < 60) {
+          wsStatus = 'Connected (${ago.inSeconds}s ago)';
+          wsColor = Colors.green;
+          wsIcon = Icons.cloud_done;
+        } else if (ago.inMinutes < 5) {
+          wsStatus = 'Connected (${ago.inMinutes}m ago)';
+          wsColor = Colors.orange;
+          wsIcon = Icons.cloud_queue;
+        } else {
+          wsStatus = 'Stale (${ago.inMinutes}m ago)';
+          wsColor = Colors.red;
+          wsIcon = Icons.cloud_off;
+        }
+      } else {
+        wsStatus = 'Connected';
+        wsColor = Colors.green;
+        wsIcon = Icons.cloud_done;
+      }
+    } else if (websocket.state.name == 'reconnecting') {
+      wsStatus = 'Reconnecting...';
+      wsColor = Colors.orange;
+      wsIcon = Icons.cloud_sync;
+    } else {
+      wsStatus = 'Disconnected';
+      wsColor = Colors.red;
+      wsIcon = Icons.cloud_off;
+    }
+
+    // Determine observation age
+    String obsStatus;
+    Color obsColor;
+    if (observation != null) {
+      final age = observation.age;
+      if (age.inSeconds < 60) {
+        obsStatus = '${age.inSeconds}s ago';
+        obsColor = Colors.green;
+      } else if (age.inMinutes < 5) {
+        obsStatus = '${age.inMinutes}m ago';
+        obsColor = Colors.orange;
+      } else {
+        obsStatus = '${age.inMinutes}m ago (stale)';
+        obsColor = Colors.red;
+      }
+    } else {
+      obsStatus = 'No data';
+      obsColor = Colors.grey;
+    }
+
+    // Connection type label
+    String connectionLabel;
+    switch (connectionType) {
+      case ConnectionType.websocket:
+        connectionLabel = 'WebSocket';
+        break;
+      case ConnectionType.udp:
+        connectionLabel = 'UDP (Local)';
+        break;
+      case ConnectionType.rest:
+        connectionLabel = 'REST API';
+        break;
+      case ConnectionType.none:
+        connectionLabel = 'None';
+        break;
+    }
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.sensors, size: 18, color: isDark ? Colors.white70 : Colors.black54),
+                const SizedBox(width: 8),
+                Text(
+                  'Connection Status',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // Active connection type
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Active: $connectionLabel',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  'Data: $obsStatus',
+                  style: TextStyle(fontSize: 12, color: obsColor),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // WebSocket row
+            Row(
+              children: [
+                Icon(wsIcon, size: 16, color: wsColor),
+                const SizedBox(width: 8),
+                Text('WebSocket: ', style: TextStyle(fontSize: 12, color: isDark ? Colors.white70 : Colors.black54)),
+                Text(wsStatus, style: TextStyle(fontSize: 12, color: wsColor)),
+              ],
+            ),
+
+            // Refresh button
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: weatherFlow.isLoading
+                    ? null
+                    : () async {
+                        await weatherFlow.forceRefresh();
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Data refreshed'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                        }
+                      },
+                icon: weatherFlow.isLoading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 16),
+                label: Text(weatherFlow.isLoading ? 'Refreshing...' : 'Refresh Now'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

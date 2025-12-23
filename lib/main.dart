@@ -6,6 +6,8 @@ import 'services/nws_alert_service.dart';
 import 'services/tool_registry.dart';
 import 'services/tool_service.dart';
 import 'services/dashboard_service.dart';
+import 'services/config_export_service.dart';
+import 'services/config_import_service.dart';
 import 'screens/splash_screen.dart';
 
 // Tool imports - register all available tools
@@ -97,6 +99,25 @@ void main() async {
         // Solar Calculation Service
         ChangeNotifierProvider<SolarCalculationService>(
           create: (context) => SolarCalculationService(),
+        ),
+
+        // Config Export Service
+        Provider<ConfigExportService>(
+          create: (context) => ConfigExportService(
+            context.read<StorageService>(),
+            context.read<DashboardService>(),
+            context.read<ToolService>(),
+            context.read<WeatherFlowService>(),
+          ),
+        ),
+
+        // Config Import Service
+        Provider<ConfigImportService>(
+          create: (context) => ConfigImportService(
+            context.read<StorageService>(),
+            context.read<DashboardService>(),
+            context.read<ToolService>(),
+          ),
         ),
       ],
       child: const WeatherFlowApp(),

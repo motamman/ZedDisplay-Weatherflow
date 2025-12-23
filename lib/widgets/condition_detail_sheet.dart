@@ -11,42 +11,6 @@ import '../services/observation_history_service.dart';
 import '../services/weatherflow_service.dart';
 import 'condition_card.dart';
 
-/// Helper to format value for display using ConversionService
-String formatConditionValue(ConditionVariable variable, double val, ConversionService conversions) {
-  switch (variable) {
-    case ConditionVariable.temperature:
-    case ConditionVariable.feelsLike:
-    case ConditionVariable.dewPoint:
-      return conversions.formatTemperature(val);
-    case ConditionVariable.humidity:
-      return conversions.formatHumidity(val);
-    case ConditionVariable.pressure:
-      return conversions.formatPressure(val);
-    case ConditionVariable.windSpeed:
-    case ConditionVariable.windGust:
-      return conversions.formatWindSpeed(val);
-    case ConditionVariable.windDirection:
-      return '${val.toStringAsFixed(0)}°';
-    case ConditionVariable.rainRate:
-    case ConditionVariable.rainAccumulated:
-      return conversions.formatRainfall(val);
-    case ConditionVariable.uvIndex:
-      return val.toStringAsFixed(1);
-    case ConditionVariable.solarRadiation:
-      return '${val.toStringAsFixed(0)} W/m²';
-    case ConditionVariable.illuminance:
-      if (val >= 1000000) return '${(val / 1000000).toStringAsFixed(1)}M lux';
-      if (val >= 1000) return '${(val / 1000).toStringAsFixed(1)}k lux';
-      return '${val.toStringAsFixed(0)} lux';
-    case ConditionVariable.lightningDistance:
-      return conversions.formatDistance(val);
-    case ConditionVariable.lightningCount:
-      return val.toStringAsFixed(0);
-    case ConditionVariable.batteryVoltage:
-      return '${val.toStringAsFixed(2)} V';
-  }
-}
-
 /// Time range options for the chart
 enum ChartTimeRange {
   hours24('24 Hours', Duration(hours: 24)),
@@ -78,7 +42,8 @@ class _ConditionDetailSheetState extends State<ConditionDetailSheet> {
   ChartTimeRange _timeRange = ChartTimeRange.hours24;
   List<DataPoint> _historyData = [];
   List<DataPoint> _forecastData = [];
-  SeriesStatistics? _stats;
+  SeriesStatistics? _historyStats;
+  SeriesStatistics? _forecastStats;
   bool _isLoading = true;
   String? _error;
 
@@ -93,6 +58,8 @@ class _ConditionDetailSheetState extends State<ConditionDetailSheet> {
       _isLoading = true;
       _error = null;
     });
+
+    final conversions = widget.weatherFlowService.conversions;
 
     try {
       // Get device serial (prefer Tempest, then any device)
@@ -121,22 +88,30 @@ class _ConditionDetailSheetState extends State<ConditionDetailSheet> {
         endTime: now,
       );
 
-      // Extract series from history
+      // Extract series from history and CONVERT values
       final historyService = ObservationHistoryService();
-      final historyPoints = historyObs != null
+      final rawHistoryPoints = historyObs != null
           ? historyService.extractSeries(historyObs, widget.variable)
           : <DataPoint>[];
 
-      // Calculate statistics
-      final stats = historyService.calculateStatistics(historyPoints);
+      // Convert all history values using ConversionService
+      final historyPoints = rawHistoryPoints.map((p) {
+        final converted = _convertValue(p.value, conversions);
+        return DataPoint(time: p.time, value: converted);
+      }).toList();
 
-      // Get forecast data if available
-      final forecastPoints = _extractForecastData();
+      // Get forecast data (already converted in _extractForecastData)
+      final forecastPoints = _extractForecastData(conversions);
+
+      // Calculate statistics on CONVERTED values for both history and forecast
+      final historyStats = historyService.calculateStatistics(historyPoints);
+      final forecastStats = historyService.calculateStatistics(forecastPoints);
 
       setState(() {
         _historyData = historyPoints;
         _forecastData = forecastPoints;
-        _stats = stats;
+        _historyStats = historyStats;
+        _forecastStats = forecastStats;
         _isLoading = false;
       });
     } catch (e) {
@@ -147,51 +122,97 @@ class _ConditionDetailSheetState extends State<ConditionDetailSheet> {
     }
   }
 
-  List<DataPoint> _extractForecastData() {
-    if (!widget.variable.hasForecast) return [];
+  /// Convert a raw SI value to user's preferred units
+  double _convertValue(double rawValue, ConversionService conversions) {
+    switch (widget.variable) {
+      case ConditionVariable.temperature:
+      case ConditionVariable.feelsLike:
+      case ConditionVariable.dewPoint:
+        return conversions.convertTemperature(rawValue) ?? rawValue;
+      case ConditionVariable.humidity:
+        return conversions.convertHumidity(rawValue);
+      case ConditionVariable.pressure:
+        return conversions.convertPressure(rawValue) ?? rawValue;
+      case ConditionVariable.windSpeed:
+      case ConditionVariable.windGust:
+        return conversions.convertWindSpeed(rawValue) ?? rawValue;
+      case ConditionVariable.windDirection:
+        return rawValue; // Degrees don't need conversion
+      case ConditionVariable.rainRate:
+      case ConditionVariable.rainAccumulated:
+        return conversions.convertRainfall(rawValue) ?? rawValue;
+      case ConditionVariable.lightningDistance:
+        return conversions.convertDistance(rawValue) ?? rawValue;
+      case ConditionVariable.uvIndex:
+      case ConditionVariable.solarRadiation:
+      case ConditionVariable.illuminance:
+      case ConditionVariable.lightningCount:
+      case ConditionVariable.batteryVoltage:
+      case ConditionVariable.precipType:
+        return rawValue; // No conversion needed
+    }
+  }
+
+  List<DataPoint> _extractForecastData(ConversionService conversions) {
+    if (!widget.variable.hasForecast) {
+      debugPrint('ConditionDetailSheet: Variable ${widget.variable} has no forecast');
+      return [];
+    }
 
     final hourlyForecasts = widget.weatherFlowService.displayHourlyForecasts;
+    debugPrint('ConditionDetailSheet: displayHourlyForecasts count: ${hourlyForecasts.length}');
+
     final now = DateTime.now();
+    // Limit forecast to same duration as history (so 24h history = 24h into future)
+    final maxForecastTime = now.add(_timeRange.duration);
     final points = <DataPoint>[];
 
     for (final forecast in hourlyForecasts) {
-      if (forecast.time == null || forecast.time!.isBefore(now)) continue;
+      if (forecast.time == null) continue;
+      // Skip past forecasts and forecasts beyond our time range
+      if (forecast.time!.isBefore(now) || forecast.time!.isAfter(maxForecastTime)) continue;
 
-      double? value;
+      double? rawValue;
       switch (widget.variable) {
         case ConditionVariable.temperature:
-          value = forecast.temperature;
+          rawValue = forecast.temperature;
           break;
         case ConditionVariable.feelsLike:
-          value = forecast.feelsLike;
+          rawValue = forecast.feelsLike;
           break;
         case ConditionVariable.humidity:
-          value = forecast.humidity;
+          rawValue = forecast.humidity;
           break;
         case ConditionVariable.pressure:
-          value = forecast.pressure;
+          rawValue = forecast.pressure;
           break;
         case ConditionVariable.windSpeed:
-          value = forecast.windSpeed;
+          rawValue = forecast.windSpeed;
           break;
         case ConditionVariable.windGust:
-          // Not directly available, skip
+          rawValue = forecast.windGust;
           break;
         case ConditionVariable.windDirection:
-          value = forecast.windDirection;
+          rawValue = forecast.windDirection;
           break;
         case ConditionVariable.uvIndex:
-          // Not directly in HourlyForecast model, skip
+          rawValue = forecast.uvIndex;
+          break;
+        case ConditionVariable.precipType:
+          rawValue = ObservationHistoryService.precipTypeStringToDouble(forecast.precipType);
           break;
         default:
           break;
       }
 
-      if (value != null) {
-        points.add(DataPoint(time: forecast.time!, value: value));
+      if (rawValue != null) {
+        // Convert to user's preferred units
+        final converted = _convertValue(rawValue, conversions);
+        points.add(DataPoint(time: forecast.time!, value: converted));
       }
     }
 
+    debugPrint('ConditionDetailSheet: Extracted ${points.length} forecast points');
     return points;
   }
 
@@ -256,7 +277,7 @@ class _ConditionDetailSheetState extends State<ConditionDetailSheet> {
                           ),
                           if (currentValue != null)
                             Text(
-                              'Current: ${formatConditionValue(widget.variable, currentValue, conversions)}',
+                              'Current: ${_convertValue(currentValue, conversions).toStringAsFixed(1)}${widget.variable.getUnitSymbol(conversions)}',
                               style: TextStyle(
                                 fontSize: 14,
                                 color: isDark ? Colors.white70 : Colors.black54,
@@ -319,7 +340,7 @@ class _ConditionDetailSheetState extends State<ConditionDetailSheet> {
               ),
 
               // Statistics panel
-              if (_stats != null && !_isLoading)
+              if ((_historyStats != null || _forecastStats != null) && !_isLoading)
                 _buildStatsPanel(isDark, style, conversions),
             ],
           ),
@@ -406,8 +427,10 @@ class _ConditionDetailSheetState extends State<ConditionDetailSheet> {
                 reservedSize: 50,
                 interval: _calculateYInterval(minY - yPadding, maxY + yPadding),
                 getTitlesWidget: (value, meta) {
+                  // Values are already converted, just format with unit
+                  final unit = widget.variable.getUnitSymbol(conversions);
                   return Text(
-                    formatConditionValue(widget.variable, value, conversions),
+                    '${value.toStringAsFixed(0)}$unit',
                     style: TextStyle(
                       fontSize: 10,
                       color: isDark ? Colors.white54 : Colors.black54,
@@ -510,7 +533,9 @@ class _ConditionDetailSheetState extends State<ConditionDetailSheet> {
                 return touchedSpots.map((spot) {
                   final time = minTime.add(Duration(minutes: spot.x.toInt()));
                   final formattedTime = DateFormat('MMM d, h:mm a').format(time);
-                  final formattedValue = formatConditionValue(widget.variable, spot.y, conversions);
+                  // Values are already converted, just format with unit
+                  final unit = widget.variable.getUnitSymbol(conversions);
+                  final formattedValue = '${spot.y.toStringAsFixed(1)}$unit';
 
                   return LineTooltipItem(
                     '$formattedTime\n$formattedValue',
@@ -529,79 +554,141 @@ class _ConditionDetailSheetState extends State<ConditionDetailSheet> {
   }
 
   Widget _buildStatsPanel(bool isDark, ConditionStyle style, ConversionService conversions) {
+    final unit = widget.variable.getUnitSymbol(conversions);
+    final historyColor = style.midColor;
+    final forecastColor = Colors.orange;
+
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: isDark ? Colors.grey.shade800 : Colors.grey.shade100,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: SafeArea(
         top: false,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            _buildStatItem(
-              'Min',
-              formatConditionValue(widget.variable, _stats!.min, conversions),
-              _stats!.minTime != null ? DateFormat('h:mm a').format(_stats!.minTime!) : '',
-              Colors.blue,
-              isDark,
-            ),
-            _buildStatItem(
-              'Max',
-              formatConditionValue(widget.variable, _stats!.max, conversions),
-              _stats!.maxTime != null ? DateFormat('h:mm a').format(_stats!.maxTime!) : '',
-              Colors.red,
-              isDark,
-            ),
-            _buildStatItem(
-              'Avg',
-              formatConditionValue(widget.variable, _stats!.avg, conversions),
-              '',
-              Colors.purple,
-              isDark,
-            ),
-            _buildStatItem(
-              'Trend',
-              _stats!.trendIcon,
-              _stats!.trendLabel,
-              _stats!.trend != null && _stats!.trend! > 0 ? Colors.green : Colors.orange,
-              isDark,
-            ),
+            // History stats row
+            if (_historyStats != null) ...[
+              Row(
+                children: [
+                  Container(
+                    width: 4,
+                    height: 36,
+                    margin: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      color: historyColor,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Text(
+                    'History',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white70 : Colors.black54,
+                    ),
+                  ),
+                  const Spacer(),
+                  _buildCompactStat('Min', _historyStats!.min, unit, Colors.blue, isDark),
+                  const SizedBox(width: 12),
+                  _buildCompactStat('Max', _historyStats!.max, unit, Colors.red, isDark),
+                  const SizedBox(width: 12),
+                  _buildCompactStat('Avg', _historyStats!.avg, unit, Colors.purple, isDark),
+                  const SizedBox(width: 12),
+                  _buildTrendIndicator(_historyStats!, isDark),
+                ],
+              ),
+            ],
+
+            // Divider between history and forecast
+            if (_historyStats != null && _forecastStats != null)
+              Divider(
+                height: 12,
+                color: isDark ? Colors.white24 : Colors.black12,
+              ),
+
+            // Forecast stats row
+            if (_forecastStats != null) ...[
+              Row(
+                children: [
+                  Container(
+                    width: 4,
+                    height: 36,
+                    margin: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      color: forecastColor,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Text(
+                    'Forecast',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white70 : Colors.black54,
+                    ),
+                  ),
+                  const Spacer(),
+                  _buildCompactStat('Min', _forecastStats!.min, unit, Colors.blue.shade300, isDark),
+                  const SizedBox(width: 12),
+                  _buildCompactStat('Max', _forecastStats!.max, unit, Colors.red.shade300, isDark),
+                  const SizedBox(width: 12),
+                  _buildCompactStat('Avg', _forecastStats!.avg, unit, Colors.purple.shade300, isDark),
+                  const SizedBox(width: 12),
+                  _buildTrendIndicator(_forecastStats!, isDark),
+                ],
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildStatItem(String label, String value, String subtitle, Color color, bool isDark) {
+  Widget _buildCompactStat(String label, double value, String unit, Color color, bool isDark) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
           style: TextStyle(
-            fontSize: 11,
-            color: isDark ? Colors.white54 : Colors.black54,
+            fontSize: 9,
+            color: isDark ? Colors.white38 : Colors.black38,
           ),
         ),
-        const SizedBox(height: 2),
         Text(
-          value,
+          '${value.toStringAsFixed(0)}$unit',
           style: TextStyle(
-            fontSize: 16,
+            fontSize: 13,
             fontWeight: FontWeight.bold,
             color: color,
           ),
         ),
-        if (subtitle.isNotEmpty)
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 10,
-              color: isDark ? Colors.white38 : Colors.black38,
-            ),
+      ],
+    );
+  }
+
+  Widget _buildTrendIndicator(SeriesStatistics stats, bool isDark) {
+    final color = stats.trend != null && stats.trend! > 0 ? Colors.green : Colors.orange;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Trend',
+          style: TextStyle(
+            fontSize: 9,
+            color: isDark ? Colors.white38 : Colors.black38,
           ),
+        ),
+        Text(
+          stats.trendIcon,
+          style: TextStyle(
+            fontSize: 14,
+            color: color,
+          ),
+        ),
       ],
     );
   }

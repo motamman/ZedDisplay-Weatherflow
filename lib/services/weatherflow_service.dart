@@ -98,6 +98,9 @@ class WeatherFlowService extends ChangeNotifier {
   /// UDP service for external access
   UdpService? get udpService => _udp;
 
+  /// WebSocket service for external access
+  WebSocketService? get websocketService => _websocket;
+
   /// All device observations (keyed by serial number)
   Map<String, Observation> get deviceObservations => Map.unmodifiable(_deviceObservations);
 
@@ -363,8 +366,15 @@ class WeatherFlowService extends ChangeNotifier {
       if (device != null) {
         await _connectWebSocket(device.deviceId);
       }
+
+      // Update derived data from cached forecast (displayHourlyForecasts, etc.)
+      _updateDerivedData();
+
       // Start refresh timer
       _startRefreshTimer();
+
+      // Fetch fresh data in background (don't await - let UI show cached data first)
+      refresh();
     }
 
     notifyListeners();
@@ -512,6 +522,7 @@ class WeatherFlowService extends ChangeNotifier {
     _websocket!.onRapidWind = _handleRapidWind;
     _websocket!.onLightning = _handleLightning;
     _websocket!.onRainStart = _handleRainStart;
+    _websocket!.onConnectionFailed = _handleWebSocketFailed;
 
     await _websocket!.connect();
 
@@ -809,16 +820,22 @@ class WeatherFlowService extends ChangeNotifier {
         hour: hourIndex++,
         time: h.time,
         temperature: h.temperature,
-        feelsLike: h.temperature, // WeatherFlow API doesn't provide feels_like in hourly
+        feelsLike: h.feelsLike ?? h.temperature, // Use feelsLike if available, fallback to temp
         humidity: h.humidity,
         windSpeed: h.windAvg,
         windDirection: h.windDirection,
-        precipProbability: h.precipProbability,
+        windGust: h.windGust,
+        precipProbability: h.precipProbability != null
+            ? h.precipProbability! * 100  // Convert from 0-1 to 0-100
+            : null,
         pressure: h.pressure,
         icon: h.icon ?? (isDay ? 'clear-day' : 'clear-night'),
         conditions: h.conditions,
         beaufort: beaufort,
         isDay: isDay,
+        uvIndex: h.uvIndex,
+        precipType: h.precipType,
+        precipIcon: h.precipIcon,
       );
     }).toList();
 
@@ -880,6 +897,16 @@ class WeatherFlowService extends ChangeNotifier {
   void _handleRainStart(RainStartEvent event) {
     _lastRainStart = event.timestamp;
     notifyListeners();
+  }
+
+  /// Handle WebSocket connection failure - fallback to REST API
+  void _handleWebSocketFailed() {
+    debugPrint('WeatherFlowService: WebSocket failed, fetching from REST as fallback');
+    _connectionType = ConnectionType.rest;
+    // Fetch fresh data from REST to keep UI updated
+    if (_selectedStation != null) {
+      _fetchObservation(_selectedStation!.stationId);
+    }
   }
 
   // ============ Disconnect ============

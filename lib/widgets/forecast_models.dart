@@ -126,8 +126,12 @@ class HourlyForecast {
   final double? pressure;
   final double? windSpeed;
   final double? windDirection; // degrees
+  final double? windGust; // m/s
   final int? beaufort; // Beaufort scale 0-12
   final bool? isDay; // Whether it's daytime
+  final double? uvIndex;
+  final String? precipType; // rain, snow, sleet, hail, etc.
+  final String? precipIcon;
 
   // Solar radiation fields (W/m²)
   final double? shortwaveRadiation;       // Total global horizontal irradiance
@@ -149,8 +153,12 @@ class HourlyForecast {
     this.pressure,
     this.windSpeed,
     this.windDirection,
+    this.windGust,
     this.beaufort,
     this.isDay,
+    this.uvIndex,
+    this.precipType,
+    this.precipIcon,
     this.shortwaveRadiation,
     this.directRadiation,
     this.diffuseRadiation,

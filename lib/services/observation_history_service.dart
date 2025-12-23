@@ -3,6 +3,7 @@
 /// Fetches and caches historical observation data from WeatherFlow API.
 /// Provides time series extraction for charting.
 
+import 'dart:math' show pow;
 import 'package:flutter/foundation.dart';
 import 'package:weatherflow_core/weatherflow_core.dart';
 
@@ -18,6 +19,7 @@ enum ConditionVariable {
   windDirection('Wind Direction', 'navigation'),
   rainRate('Rain Rate', 'umbrella'),
   rainAccumulated('Rain Today', 'water'),
+  precipType('Precip Type', 'grain'),
   uvIndex('UV Index', 'wb_sunny'),
   solarRadiation('Solar Radiation', 'solar_power'),
   illuminance('Brightness', 'lightbulb'),
@@ -41,6 +43,7 @@ enum ConditionVariable {
       case ConditionVariable.windGust:
       case ConditionVariable.windDirection:
       case ConditionVariable.uvIndex:
+      case ConditionVariable.precipType:
         return true;
       default:
         return false;
@@ -66,6 +69,8 @@ enum ConditionVariable {
       case ConditionVariable.rainRate:
       case ConditionVariable.rainAccumulated:
         return conversions.rainfallSymbol;
+      case ConditionVariable.precipType:
+        return ''; // Categorical: 0=none, 1=rain, 2=hail, 3=mix, 4=snow, 5=sleet
       case ConditionVariable.uvIndex:
         return '';
       case ConditionVariable.solarRadiation:
@@ -309,7 +314,8 @@ class ObservationHistoryService extends ChangeNotifier {
       case ConditionVariable.temperature:
         return obs.temperature;
       case ConditionVariable.feelsLike:
-        return obs.feelsLike;
+        // Use calculated feelsLike if available, otherwise calculate from temp/humidity/wind
+        return obs.feelsLike ?? _calculateFeelsLike(obs);
       case ConditionVariable.humidity:
         return obs.humidity;
       case ConditionVariable.dewPoint:
@@ -326,6 +332,9 @@ class ObservationHistoryService extends ChangeNotifier {
         return obs.rainRate;
       case ConditionVariable.rainAccumulated:
         return obs.rainAccumulated;
+      case ConditionVariable.precipType:
+        // Convert PrecipType enum to numeric: none=0, rain=1, hail=2, rainAndHail=3
+        return _precipTypeToDouble(obs.precipType);
       case ConditionVariable.uvIndex:
         return obs.uvIndex;
       case ConditionVariable.solarRadiation:
@@ -345,6 +354,131 @@ class ObservationHistoryService extends ChangeNotifier {
   double? getCurrentValue(Observation? obs, ConditionVariable variable) {
     if (obs == null) return null;
     return _extractValue(obs, variable);
+  }
+
+  /// Calculate feels like temperature from raw observation data
+  /// Uses heat index when hot/humid, wind chill when cold/windy
+  /// All calculations done in Kelvin
+  double? _calculateFeelsLike(Observation obs) {
+    final tempK = obs.temperature;
+    if (tempK == null) return null;
+
+    final humidity = obs.humidity; // 0-1 ratio
+    final windMps = obs.windAvg;
+
+    // Convert Kelvin to Celsius for threshold checks
+    final tempC = tempK - 273.15;
+
+    // Heat Index: when temp > 27°C (80°F) and humidity > 40%
+    if (tempC > 27 && humidity != null && humidity > 0.4) {
+      return _calculateHeatIndex(tempK, humidity);
+    }
+
+    // Wind Chill: when temp < 10°C (50°F) and wind > 1.34 m/s (3 mph)
+    if (tempC < 10 && windMps != null && windMps > 1.34) {
+      return _calculateWindChill(tempK, windMps);
+    }
+
+    // Otherwise, feels like = actual temperature
+    return tempK;
+  }
+
+  /// Calculate heat index using Rothfusz regression (returns Kelvin)
+  double _calculateHeatIndex(double tempK, double humidityRatio) {
+    // Convert to Fahrenheit for standard formula
+    final tempF = (tempK - 273.15) * 9 / 5 + 32;
+    final rh = humidityRatio * 100; // Convert to percentage
+
+    // Rothfusz regression equation
+    double hi = -42.379 +
+        2.04901523 * tempF +
+        10.14333127 * rh -
+        0.22475541 * tempF * rh -
+        0.00683783 * tempF * tempF -
+        0.05481717 * rh * rh +
+        0.00122874 * tempF * tempF * rh +
+        0.00085282 * tempF * rh * rh -
+        0.00000199 * tempF * tempF * rh * rh;
+
+    // Adjustment for low humidity
+    if (rh < 13 && tempF >= 80 && tempF <= 112) {
+      hi -= ((13 - rh) / 4) * ((17 - (tempF - 95).abs()) / 17).clamp(0, 1);
+    }
+    // Adjustment for high humidity
+    else if (rh > 85 && tempF >= 80 && tempF <= 87) {
+      hi += ((rh - 85) / 10) * ((87 - tempF) / 5);
+    }
+
+    // Convert back to Kelvin
+    return (hi - 32) * 5 / 9 + 273.15;
+  }
+
+  /// Calculate wind chill (returns Kelvin)
+  double _calculateWindChill(double tempK, double windMps) {
+    // Convert to units for standard formula
+    final tempF = (tempK - 273.15) * 9 / 5 + 32;
+    final windMph = windMps * 2.237; // m/s to mph
+
+    // Standard wind chill formula
+    final windPow = pow(windMph <= 0 ? 1 : windMph, 0.16);
+    final wc = 35.74 +
+        0.6215 * tempF -
+        35.75 * windPow +
+        0.4275 * tempF * windPow;
+
+    // Convert back to Kelvin
+    return (wc - 32) * 5 / 9 + 273.15;
+  }
+
+  /// Convert PrecipType enum to double for charting
+  /// 0=none, 1=rain, 2=hail, 3=rainAndHail
+  double _precipTypeToDouble(PrecipType type) {
+    switch (type) {
+      case PrecipType.none:
+        return 0;
+      case PrecipType.rain:
+        return 1;
+      case PrecipType.hail:
+        return 2;
+      case PrecipType.rainAndHail:
+        return 3;
+    }
+  }
+
+  /// Convert forecast precip type string to double for charting
+  /// 0=none, 1=rain, 2=hail, 3=mix, 4=snow, 5=sleet, 6=freezing rain
+  static double precipTypeStringToDouble(String? type) {
+    if (type == null || type.isEmpty) return 0;
+    final lower = type.toLowerCase();
+    if (lower.contains('snow')) return 4;
+    if (lower.contains('sleet')) return 5;
+    if (lower.contains('freezing')) return 6;
+    if (lower.contains('hail')) return 2;
+    if (lower.contains('rain')) return 1;
+    if (lower.contains('mix')) return 3;
+    return 0;
+  }
+
+  /// Get label for precip type numeric value
+  static String precipTypeLabel(double value) {
+    switch (value.round()) {
+      case 0:
+        return 'None';
+      case 1:
+        return 'Rain';
+      case 2:
+        return 'Hail';
+      case 3:
+        return 'Mix';
+      case 4:
+        return 'Snow';
+      case 5:
+        return 'Sleet';
+      case 6:
+        return 'Freezing';
+      default:
+        return 'Unknown';
+    }
   }
 
   // Cache helpers

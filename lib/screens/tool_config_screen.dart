@@ -1673,6 +1673,7 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
     final showRainAccumulated = _customProperties['showRainAccumulated'] as bool? ?? true;
     final showUvIndex = _customProperties['showUvIndex'] as bool? ?? true;
     final showSolarRadiation = _customProperties['showSolarRadiation'] as bool? ?? true;
+    final showPrecipType = _customProperties['showPrecipType'] as bool? ?? true;
     final showLightning = _customProperties['showLightning'] as bool? ?? true;
     final showBattery = _customProperties['showBattery'] as bool? ?? true;
 
@@ -1833,6 +1834,15 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
               value: showSolarRadiation,
               onChanged: (value) {
                 setState(() => _customProperties['showSolarRadiation'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Precip Type'),
+              subtitle: const Text('Rain, snow, hail, etc.'),
+              dense: true,
+              value: showPrecipType,
+              onChanged: (value) {
+                setState(() => _customProperties['showPrecipType'] = value);
               },
             ),
             SwitchListTile(

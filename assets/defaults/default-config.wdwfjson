@@ -1,0 +1,256 @@
+{
+  "version": "1.0.0",
+  "appVersion": "0.1.0",
+  "exportedAt": "2025-12-23T00:00:00.000Z",
+  "deviceInfo": {
+    "platform": "android",
+    "osVersion": "14",
+    "deviceModel": "Default"
+  },
+  "config": {
+    "settings": {
+      "themeMode": "dark",
+      "refreshInterval": 5,
+      "udpEnabled": true,
+      "udpPort": 50222
+    },
+    "unitPreferences": {
+      "temperature": "°F",
+      "pressure": "hPa",
+      "windSpeed": "kn",
+      "rainfall": "mm",
+      "distance": "nm"
+    },
+    "dashboardLayout": {
+      "id": "layout_default",
+      "name": "Default Dashboard",
+      "screens": [
+        {
+          "id": "screen_hourly",
+          "name": "Hourly",
+          "portraitPlacements": [
+            {
+              "toolId": "default-spinner",
+              "screenId": "screen_hourly",
+              "position": {
+                "row": 0,
+                "col": 0,
+                "width": 8,
+                "height": 4
+              }
+            },
+            {
+              "toolId": "default-alerts",
+              "screenId": "screen_hourly",
+              "position": {
+                "row": 4,
+                "col": 0,
+                "width": 8,
+                "height": 4
+              }
+            }
+          ],
+          "landscapePlacements": [
+            {
+              "toolId": "default-spinner",
+              "screenId": "screen_hourly",
+              "position": {
+                "row": 0,
+                "col": 0,
+                "width": 8,
+                "height": 4
+              }
+            },
+            {
+              "toolId": "default-alerts",
+              "screenId": "screen_hourly",
+              "position": {
+                "row": 4,
+                "col": 0,
+                "width": 8,
+                "height": 4
+              }
+            }
+          ],
+          "allowOverflow": false,
+          "order": 0
+        },
+        {
+          "id": "screen_daily",
+          "name": "Daily",
+          "portraitPlacements": [
+            {
+              "toolId": "default-forecast",
+              "screenId": "screen_daily",
+              "position": {
+                "row": 0,
+                "col": 0,
+                "width": 8,
+                "height": 8
+              }
+            }
+          ],
+          "landscapePlacements": [
+            {
+              "toolId": "default-forecast",
+              "screenId": "screen_daily",
+              "position": {
+                "row": 0,
+                "col": 0,
+                "width": 8,
+                "height": 8
+              }
+            }
+          ],
+          "allowOverflow": false,
+          "order": 1
+        },
+        {
+          "id": "screen_conditions",
+          "name": "Conditions",
+          "portraitPlacements": [
+            {
+              "toolId": "default-conditions",
+              "screenId": "screen_conditions",
+              "position": {
+                "row": 0,
+                "col": 0,
+                "width": 8,
+                "height": 8
+              }
+            }
+          ],
+          "landscapePlacements": [
+            {
+              "toolId": "default-conditions",
+              "screenId": "screen_conditions",
+              "position": {
+                "row": 0,
+                "col": 0,
+                "width": 8,
+                "height": 8
+              }
+            }
+          ],
+          "allowOverflow": false,
+          "order": 2
+        }
+      ],
+      "activeScreenIndex": 0
+    },
+    "tools": [
+      {
+        "id": "default-spinner",
+        "name": "Forecast Spinner",
+        "description": "Circular forecast wheel showing hourly weather conditions",
+        "createdAt": "2025-12-23T00:00:00.000000",
+        "toolTypeId": "weather_api_spinner",
+        "config": {
+          "dataSources": [],
+          "style": {
+            "showLabel": true,
+            "showValue": true,
+            "showUnit": true,
+            "customProperties": {
+              "showTitle": true,
+              "showAnimation": true,
+              "forecastDays": 7,
+              "showDateRing": true,
+              "dateRingMode": "range",
+              "showPrimaryIcons": true,
+              "showSecondaryIcons": true,
+              "showWindCenter": true,
+              "showSeaCenter": false
+            }
+          }
+        },
+        "defaultWidth": 8,
+        "defaultHeight": 4,
+        "category": "weather",
+        "tags": []
+      },
+      {
+        "id": "default-forecast",
+        "name": "Weekly Forecast",
+        "description": "Hourly and daily forecast with current conditions",
+        "createdAt": "2025-12-23T00:00:00.000000",
+        "toolTypeId": "weatherflow_forecast",
+        "config": {
+          "dataSources": [],
+          "style": {
+            "showLabel": true,
+            "showValue": true,
+            "showUnit": true,
+            "customProperties": {
+              "hoursToShow": 12,
+              "daysToShow": 10,
+              "showTitle": false,
+              "showSunMoonArc": true,
+              "showCurrentConditions": true,
+              "showDailyForecast": true,
+              "use24HourFormat": false
+            }
+          }
+        },
+        "defaultWidth": 8,
+        "defaultHeight": 8,
+        "category": "weather",
+        "tags": []
+      },
+      {
+        "id": "default-alerts",
+        "name": "Weather Alerts",
+        "description": "Display NWS weather alerts for your location",
+        "createdAt": "2025-12-23T00:00:00.000000",
+        "toolTypeId": "weather_alerts",
+        "config": {
+          "dataSources": [],
+          "style": {
+            "showLabel": true,
+            "showValue": true,
+            "showUnit": true,
+            "customProperties": {
+              "showTitle": true,
+              "compact": false,
+              "locationSource": "station",
+              "refreshInterval": 10,
+              "showDescription": true,
+              "showInstruction": true,
+              "showAreaDesc": false,
+              "showSenderName": false,
+              "showTimeRange": true
+            }
+          }
+        },
+        "defaultWidth": 8,
+        "defaultHeight": 4,
+        "category": "weather",
+        "tags": []
+      },
+      {
+        "id": "default-conditions",
+        "name": "Current Conditions",
+        "description": "Reorderable dashboard of current weather conditions",
+        "createdAt": "2025-12-23T00:00:00.000000",
+        "toolTypeId": "conditions_dashboard",
+        "config": {
+          "dataSources": [],
+          "style": {
+            "showLabel": true,
+            "showValue": true,
+            "showUnit": true,
+            "customProperties": {
+              "showTitle": true,
+              "compactMode": false
+            }
+          }
+        },
+        "defaultWidth": 8,
+        "defaultHeight": 8,
+        "category": "weather",
+        "tags": []
+      }
+    ],
+    "stationToolConfigs": {}
+  }
+}

@@ -861,6 +861,7 @@ class WeatherAlertsToolBuilder extends ToolBuilder {
     WeatherFlowService weatherFlowService, {
     bool isEditMode = false,
     String? name,
+    void Function(ToolConfig)? onConfigChanged,
   }) {
     return WeatherAlertsTool(
       config: config,

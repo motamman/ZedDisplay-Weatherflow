@@ -38,6 +38,7 @@ class WebSocketService extends ChangeNotifier {
   RapidWindCallback? onRapidWind;
   LightningCallback? onLightning;
   RainStartCallback? onRainStart;
+  VoidCallback? onConnectionFailed; // Called when connection fails (for REST fallback)
 
   // Constants
   static const Duration _heartbeatInterval = Duration(seconds: 30);
@@ -94,6 +95,8 @@ class WebSocketService extends ChangeNotifier {
       debugPrint('WebSocketService: Connection error: $e');
       _state = WebSocketState.disconnected;
       notifyListeners();
+      // Notify listener to fallback to REST API
+      onConnectionFailed?.call();
       _scheduleReconnect();
     }
   }

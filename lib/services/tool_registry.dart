@@ -14,7 +14,8 @@ abstract class ToolBuilder {
   /// Build a widget instance with the given configuration
   /// [isEditMode] indicates if the dashboard is in edit mode (tool should hide its own controls)
   /// [name] is the user-configured display name for this tool instance
-  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name});
+  /// [onConfigChanged] callback to save config changes (e.g., reordering)
+  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name, void Function(ToolConfig)? onConfigChanged});
 
   /// Get default config for this tool type (optional)
   ToolConfig? getDefaultConfig() => null;
@@ -37,7 +38,8 @@ class ToolRegistry extends ChangeNotifier {
   /// Build a tool widget from configuration
   /// [isEditMode] is passed to the tool widget so it can hide its own controls
   /// [name] is the user-configured display name for this tool instance
-  Widget buildTool(String toolTypeId, ToolConfig config, WeatherFlowService service, {bool isEditMode = false, String? name}) {
+  /// [onConfigChanged] callback to save config changes
+  Widget buildTool(String toolTypeId, ToolConfig config, WeatherFlowService service, {bool isEditMode = false, String? name, void Function(ToolConfig)? onConfigChanged}) {
     final builder = _builders[toolTypeId];
     if (builder == null) {
       return Center(
@@ -47,7 +49,7 @@ class ToolRegistry extends ChangeNotifier {
         ),
       );
     }
-    return builder.build(config, service, isEditMode: isEditMode, name: name);
+    return builder.build(config, service, isEditMode: isEditMode, name: name, onConfigChanged: onConfigChanged);
   }
 
   /// Get definition for a tool type

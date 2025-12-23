@@ -7,6 +7,30 @@ enum ObservationSource { udp, websocket, rest }
 /// Precipitation types
 enum PrecipType { none, rain, hail, rainAndHail }
 
+/// Tempest observation array indices per WeatherFlow API documentation
+/// https://weatherflow.github.io/Tempest/api/swagger/
+/// Single source of truth - update here if API changes
+abstract class TempestObsIndex {
+  static const int timestamp = 0;
+  static const int windLull = 1;
+  static const int windAvg = 2;
+  static const int windGust = 3;
+  static const int windDirection = 4;
+  static const int windSampleInterval = 5;  // Not used in Observation model
+  static const int pressure = 6;             // MB
+  static const int temperature = 7;          // Celsius
+  static const int humidity = 8;             // Percent
+  static const int illuminance = 9;          // Lux
+  static const int uvIndex = 10;
+  static const int solarRadiation = 11;      // W/m²
+  static const int rainAccumulation = 12;    // mm
+  static const int precipType = 13;
+  static const int lightningDistance = 14;   // km
+  static const int lightningCount = 15;
+  static const int battery = 16;             // Volts
+  static const int reportInterval = 17;      // Minutes
+}
+
 /// Real-time observation from a Tempest device
 class Observation {
   final DateTime timestamp;
@@ -83,33 +107,40 @@ class Observation {
     this.seaLevelPressure,
   });
 
-  /// Parse from UDP obs_st message (Tempest observation)
-  /// Format: [epoch, windLull, windAvg, windGust, windDir, pressure, temp, humidity,
-  ///          illuminance, uv, solarRad, rainAccum, precipType, lightningDist,
-  ///          lightningCount, battery, reportInterval, localDayRainAccum, rainCheck1,
-  ///          rainCheck2, localDayFinalRainAccum]
-  factory Observation.fromUdpTempest(List<dynamic> obs, int deviceId) {
+  /// Parse from Tempest observation array (UDP or REST API)
+  /// Uses TempestObsIndex constants - update those if API format changes
+  factory Observation.fromTempestArray(List<dynamic> obs, int deviceId, {ObservationSource source = ObservationSource.udp}) {
     return Observation(
-      timestamp: DateTime.fromMillisecondsSinceEpoch((obs[0] as num).toInt() * 1000),
+      timestamp: DateTime.fromMillisecondsSinceEpoch((obs[TempestObsIndex.timestamp] as num).toInt() * 1000),
       deviceId: deviceId,
-      source: ObservationSource.udp,
-      windLull: (obs[1] as num?)?.toDouble(),
-      windAvg: (obs[2] as num?)?.toDouble(),
-      windGust: (obs[3] as num?)?.toDouble(),
-      windDirection: (obs[4] as num?)?.toDouble(),
-      stationPressure: obs[5] != null ? (obs[5] as num).toDouble() * 100 : null, // mbar to Pa
-      temperature: obs[6] != null ? (obs[6] as num).toDouble() + 273.15 : null, // C to K
-      humidity: obs[7] != null ? (obs[7] as num).toDouble() / 100 : null, // % to ratio
-      illuminance: (obs[8] as num?)?.toDouble(),
-      uvIndex: (obs[9] as num?)?.toDouble(),
-      solarRadiation: (obs[10] as num?)?.toDouble(),
-      rainAccumulated: obs[11] != null ? (obs[11] as num).toDouble() / 1000 : null, // mm to m
-      precipType: _parsePrecipType((obs[12] as num?)?.toInt()),
-      lightningDistance: obs[13] != null ? (obs[13] as num).toDouble() * 1000 : null, // km to m
-      lightningCount: (obs[14] as num?)?.toInt(),
-      batteryVoltage: (obs[15] as num?)?.toDouble(),
-      reportInterval: (obs[16] as num?)?.toInt(),
+      source: source,
+      windLull: (obs[TempestObsIndex.windLull] as num?)?.toDouble(),
+      windAvg: (obs[TempestObsIndex.windAvg] as num?)?.toDouble(),
+      windGust: (obs[TempestObsIndex.windGust] as num?)?.toDouble(),
+      windDirection: (obs[TempestObsIndex.windDirection] as num?)?.toDouble(),
+      stationPressure: obs[TempestObsIndex.pressure] != null
+          ? (obs[TempestObsIndex.pressure] as num).toDouble() * 100 : null, // mbar to Pa
+      temperature: obs[TempestObsIndex.temperature] != null
+          ? (obs[TempestObsIndex.temperature] as num).toDouble() + 273.15 : null, // C to K
+      humidity: obs[TempestObsIndex.humidity] != null
+          ? (obs[TempestObsIndex.humidity] as num).toDouble() / 100 : null, // % to ratio
+      illuminance: (obs[TempestObsIndex.illuminance] as num?)?.toDouble(),
+      uvIndex: (obs[TempestObsIndex.uvIndex] as num?)?.toDouble(),
+      solarRadiation: (obs[TempestObsIndex.solarRadiation] as num?)?.toDouble(),
+      rainAccumulated: obs[TempestObsIndex.rainAccumulation] != null
+          ? (obs[TempestObsIndex.rainAccumulation] as num).toDouble() / 1000 : null, // mm to m
+      precipType: _parsePrecipType((obs[TempestObsIndex.precipType] as num?)?.toInt()),
+      lightningDistance: obs[TempestObsIndex.lightningDistance] != null
+          ? (obs[TempestObsIndex.lightningDistance] as num).toDouble() * 1000 : null, // km to m
+      lightningCount: (obs[TempestObsIndex.lightningCount] as num?)?.toInt(),
+      batteryVoltage: (obs[TempestObsIndex.battery] as num?)?.toDouble(),
+      reportInterval: (obs[TempestObsIndex.reportInterval] as num?)?.toInt(),
     );
+  }
+
+  /// Legacy alias for UDP parsing - uses same format as REST API
+  factory Observation.fromUdpTempest(List<dynamic> obs, int deviceId) {
+    return Observation.fromTempestArray(obs, deviceId, source: ObservationSource.udp);
   }
 
   /// Parse from UDP rapid_wind message
@@ -135,29 +166,31 @@ class Observation {
       );
     }
 
-    // obs[0] is the observation array
+    // obs[0] is the observation array - use shared parser
     final data = obs[0] as List;
+    final baseObs = Observation.fromTempestArray(data, deviceId, source: ObservationSource.rest);
 
+    // Add calculated values from summary
     return Observation(
-      timestamp: DateTime.fromMillisecondsSinceEpoch((data[0] as num).toInt() * 1000),
-      deviceId: deviceId,
-      source: ObservationSource.rest,
-      windLull: (data[1] as num?)?.toDouble(),
-      windAvg: (data[2] as num?)?.toDouble(),
-      windGust: (data[3] as num?)?.toDouble(),
-      windDirection: (data[4] as num?)?.toDouble(),
-      stationPressure: data[6] != null ? (data[6] as num).toDouble() * 100 : null, // mbar to Pa
-      temperature: data[7] != null ? (data[7] as num).toDouble() + 273.15 : null, // C to K
-      humidity: data[8] != null ? (data[8] as num).toDouble() / 100 : null, // % to ratio
-      illuminance: (data[9] as num?)?.toDouble(),
-      uvIndex: (data[10] as num?)?.toDouble(),
-      solarRadiation: (data[11] as num?)?.toDouble(),
-      rainAccumulated: data[12] != null ? (data[12] as num).toDouble() / 1000 : null, // mm to m
-      precipType: _parsePrecipType((data[13] as num?)?.toInt()),
-      lightningCount: (data[14] as num?)?.toInt(),
-      lightningDistance: data[15] != null ? (data[15] as num).toDouble() * 1000 : null, // km to m
-      batteryVoltage: (data[16] as num?)?.toDouble(),
-      reportInterval: (data[17] as num?)?.toInt(),
+      timestamp: baseObs.timestamp,
+      deviceId: baseObs.deviceId,
+      source: baseObs.source,
+      windLull: baseObs.windLull,
+      windAvg: baseObs.windAvg,
+      windGust: baseObs.windGust,
+      windDirection: baseObs.windDirection,
+      stationPressure: baseObs.stationPressure,
+      temperature: baseObs.temperature,
+      humidity: baseObs.humidity,
+      illuminance: baseObs.illuminance,
+      uvIndex: baseObs.uvIndex,
+      solarRadiation: baseObs.solarRadiation,
+      rainAccumulated: baseObs.rainAccumulated,
+      precipType: baseObs.precipType,
+      lightningDistance: baseObs.lightningDistance,
+      lightningCount: baseObs.lightningCount,
+      batteryVoltage: baseObs.batteryVoltage,
+      reportInterval: baseObs.reportInterval,
       // Calculated values from summary
       feelsLike: json['summary']?['feels_like'] != null
           ? (json['summary']['feels_like'] as num).toDouble() + 273.15
@@ -180,7 +213,7 @@ class Observation {
   /// Parse from WebSocket obs message
   factory Observation.fromWebSocket(Map<String, dynamic> json) {
     final obs = json['obs'] as List?;
-    final deviceId = json['device_id'] as int? ?? 0;
+    final deviceId = (json['device_id'] as num?)?.toInt() ?? 0;
 
     if (obs == null || obs.isEmpty) {
       return Observation(
@@ -190,29 +223,9 @@ class Observation {
       );
     }
 
+    // Use shared parser for consistent indices
     final data = obs[0] as List;
-
-    return Observation(
-      timestamp: DateTime.fromMillisecondsSinceEpoch((data[0] as num).toInt() * 1000),
-      deviceId: deviceId,
-      source: ObservationSource.websocket,
-      windLull: (data[1] as num?)?.toDouble(),
-      windAvg: (data[2] as num?)?.toDouble(),
-      windGust: (data[3] as num?)?.toDouble(),
-      windDirection: (data[4] as num?)?.toDouble(),
-      stationPressure: data[6] != null ? (data[6] as num).toDouble() * 100 : null,
-      temperature: data[7] != null ? (data[7] as num).toDouble() + 273.15 : null,
-      humidity: data[8] != null ? (data[8] as num).toDouble() / 100 : null,
-      illuminance: (data[9] as num?)?.toDouble(),
-      uvIndex: (data[10] as num?)?.toDouble(),
-      solarRadiation: (data[11] as num?)?.toDouble(),
-      rainAccumulated: data[12] != null ? (data[12] as num).toDouble() / 1000 : null, // mm to m
-      precipType: _parsePrecipType((data[13] as num?)?.toInt()),
-      lightningCount: (data[14] as num?)?.toInt(),
-      lightningDistance: data[15] != null ? (data[15] as num).toDouble() * 1000 : null, // km to m
-      batteryVoltage: (data[16] as num?)?.toDouble(),
-      reportInterval: (data[17] as num?)?.toInt(),
-    );
+    return Observation.fromTempestArray(data, deviceId, source: ObservationSource.websocket);
   }
 
   static PrecipType _parsePrecipType(int? type) {

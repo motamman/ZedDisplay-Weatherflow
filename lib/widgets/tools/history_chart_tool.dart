@@ -31,7 +31,7 @@ class HistoryChartToolBuilder implements ToolBuilder {
   }
 
   @override
-  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name}) {
+  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name, void Function(ToolConfig)? onConfigChanged}) {
     return HistoryChartTool(
       config: config,
       weatherFlowService: weatherFlowService,

@@ -424,6 +424,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  /// Save tool config changes (e.g., card order from reordering)
+  void _saveToolConfig(String toolId, ToolConfig newConfig) {
+    final toolService = context.read<ToolService>();
+    final tool = toolService.getTool(toolId);
+    if (tool == null) return;
+
+    // Update the tool with new config
+    final updatedTool = tool.copyWith(config: newConfig);
+    toolService.updateTool(updatedTool);
+
+    debugPrint('DashboardScreen: Saved config for tool $toolId');
+  }
+
   void _showRenameDialog(String screenId, String currentName) {
     final controller = TextEditingController(text: currentName);
     final dashboardService = context.read<DashboardService>();
@@ -743,7 +756,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     // Tool widget
                     Padding(
                       padding: const EdgeInsets.all(8),
-                      child: toolRegistry.buildTool(tool.toolTypeId, effectiveConfig, weatherFlow, isEditMode: true, name: tool.name),
+                      child: toolRegistry.buildTool(
+                        tool.toolTypeId,
+                        effectiveConfig,
+                        weatherFlow,
+                        isEditMode: true,
+                        name: tool.name,
+                        onConfigChanged: (newConfig) {
+                          // Save config changes (e.g., card order)
+                          _saveToolConfig(tool.id, newConfig);
+                        },
+                      ),
                     ),
 
                     // Drag-to-move handle at top-left

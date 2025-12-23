@@ -39,7 +39,7 @@ class SunMoonArcToolBuilder extends ToolBuilder {
   }
 
   @override
-  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name}) {
+  Widget build(ToolConfig config, WeatherFlowService weatherFlowService, {bool isEditMode = false, String? name, void Function(ToolConfig)? onConfigChanged}) {
     return SunMoonArcTool(
       config: config,
       weatherFlowService: weatherFlowService,

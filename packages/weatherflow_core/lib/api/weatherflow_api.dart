@@ -93,11 +93,11 @@ class WeatherFlowApi {
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       final obsList = <Observation>[];
 
-      // Parse each observation in the response
+      // Parse each observation in the response using standard Tempest array format
       if (json['obs'] is List) {
         for (final obs in json['obs'] as List) {
           if (obs is List) {
-            obsList.add(Observation.fromUdpTempest(obs, deviceId));
+            obsList.add(Observation.fromTempestArray(obs, deviceId, source: ObservationSource.rest));
           }
         }
       }

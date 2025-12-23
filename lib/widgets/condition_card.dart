@@ -147,6 +147,17 @@ ConditionStyle getStyleForVariable(ConditionVariable variable) {
         formatValue: (v, u) => '${(v * 1000).toStringAsFixed(1)} $u',
       );
 
+    case ConditionVariable.precipType:
+      return ConditionStyle(
+        icon: Icons.grain,
+        lowColor: Colors.grey.shade400,   // none
+        midColor: Colors.blue.shade500,   // rain
+        highColor: Colors.cyan.shade300,  // snow/sleet
+        minRange: 0,
+        maxRange: 6,
+        formatValue: (v, u) => ObservationHistoryService.precipTypeLabel(v),
+      );
+
     case ConditionVariable.uvIndex:
       return ConditionStyle(
         icon: Icons.wb_sunny,
@@ -285,6 +296,8 @@ class ConditionCard extends StatelessWidget {
         return val.toStringAsFixed(0);
       case ConditionVariable.batteryVoltage:
         return '${val.toStringAsFixed(2)} V';
+      case ConditionVariable.precipType:
+        return ObservationHistoryService.precipTypeLabel(val);
     }
   }
 

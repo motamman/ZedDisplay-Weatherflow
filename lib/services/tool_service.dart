@@ -189,4 +189,21 @@ class ToolService extends ChangeNotifier {
     await _saveTools();
     notifyListeners();
   }
+
+  /// Clear all tools (alias for import service)
+  Future<void> clearAllTools() async {
+    await clearAll();
+  }
+
+  /// Import a tool directly (for config import)
+  Future<void> importTool(Tool tool) async {
+    _tools[tool.id] = tool;
+    await _saveTools();
+    notifyListeners();
+  }
+
+  /// Refresh/notify listeners (for config import)
+  void refresh() {
+    notifyListeners();
+  }
 }
