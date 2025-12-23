@@ -1,6 +1,6 @@
 // WeatherFlow Forecast Tool
 // Displays hourly and daily forecast with current conditions
-// Adapted from ZedDisplay architecture
+// Simplified pattern - uses service pre-parsed data
 //
 // UNITS: All internal values are stored in SI base units:
 // - Temperature: Kelvin (K)
@@ -13,12 +13,12 @@
 // Conversions to user preferences are done via ConversionService at display time.
 
 import 'package:flutter/material.dart';
-import 'package:weatherflow_core/weatherflow_core.dart' show ObservationSource;
+import 'package:weatherflow_core/weatherflow_core.dart' hide HourlyForecast, DailyForecast;
 import '../../models/tool_config.dart';
 import '../../models/tool_definition.dart';
 import '../../services/tool_registry.dart';
 import '../../services/weatherflow_service.dart';
-import '../../utils/sun_calc.dart';
+import '../../utils/conversion_extensions.dart';
 import '../weatherflow_forecast.dart';
 import '../forecast_models.dart';
 
@@ -68,16 +68,7 @@ class WeatherFlowForecastToolBuilder implements ToolBuilder {
           'showSunMoonArc': true,
           'showCurrentConditions': true,
           'showDailyForecast': true,
-          'use24HourFormat': false, // false = 12-hour AM/PM, true = 24-hour military
-          // Device source preferences ('auto' or device serial number)
-          // Measurement types: temp, humidity, pressure, wind, light, rain, lightning
-          'tempSource': 'auto',
-          'humiditySource': 'auto',
-          'pressureSource': 'auto',
-          'windSource': 'auto',
-          'lightSource': 'auto',
-          'rainSource': 'auto',
-          'lightningSource': 'auto',
+          'use24HourFormat': false,
         },
       ),
     );
@@ -104,38 +95,9 @@ class WeatherFlowForecastTool extends StatefulWidget {
 }
 
 class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
-  List<HourlyForecast> _hourlyForecasts = [];
-  List<DailyForecast> _dailyForecasts = [];
-  SunMoonTimes? _sunMoonTimes;
-  bool _isLoading = true;
-  String? _error;
-
   // Refresh state
   bool _isRefreshing = false;
   _RefreshStatus? _refreshStatus;
-
-  // Current conditions - ALL VALUES IN SI BASE UNITS
-  double? _currentTemp;           // Kelvin
-  double? _currentHumidity;       // ratio 0-1
-  double? _currentPressure;       // Pascals
-  double? _currentWindSpeed;      // m/s
-  double? _currentWindGust;       // m/s
-  double? _currentWindDirection;  // degrees (0-360)
-  double? _rainLastHour;          // meters
-  double? _rainToday;             // meters
-
-  // Data sources for each condition
-  ConditionDataSource _tempSource = ConditionDataSource.none;
-  ConditionDataSource _humiditySource = ConditionDataSource.none;
-  ConditionDataSource _pressureSource = ConditionDataSource.none;
-  ConditionDataSource _windSource = ConditionDataSource.none;
-  ConditionDataSource _rainSource = ConditionDataSource.none;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadForecast();
-  }
 
   /// Get configured primary color or fall back to theme color
   Color _getPrimaryColor(BuildContext context) {
@@ -161,15 +123,14 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
     });
 
     try {
-      // Force fetch from API (bypasses cache)
-      await widget.weatherFlowService.fetchForecast();
-      final forecast = widget.weatherFlowService.currentForecast;
+      await widget.weatherFlowService.refreshForecast();
 
-      if (forecast != null) {
-        _parseForecasts(forecast);
+      if (mounted) {
         setState(() {
           _isRefreshing = false;
-          _refreshStatus = _RefreshStatus.success;
+          _refreshStatus = widget.weatherFlowService.hasData
+              ? _RefreshStatus.success
+              : _RefreshStatus.failure;
         });
 
         // Clear status after 2 seconds
@@ -178,286 +139,14 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
             setState(() => _refreshStatus = null);
           }
         });
-      } else {
-        setState(() {
-          _isRefreshing = false;
-          _refreshStatus = _RefreshStatus.failure;
-        });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isRefreshing = false;
           _refreshStatus = _RefreshStatus.failure;
-          _error = 'Refresh failed: $e';
         });
       }
-    }
-  }
-
-  @override
-  void didUpdateWidget(WeatherFlowForecastTool oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.weatherFlowService.selectedStation?.stationId !=
-        widget.weatherFlowService.selectedStation?.stationId) {
-      _loadForecast();
-    }
-  }
-
-  Future<void> _loadForecast() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
-    try {
-      // Load forecast first to get current hour data
-      var forecast = widget.weatherFlowService.currentForecast;
-      if (forecast == null) {
-        await widget.weatherFlowService.fetchForecast();
-        forecast = widget.weatherFlowService.currentForecast;
-      }
-
-      // Initialize from forecast data (lowest priority)
-      // All values kept in SI base units (K, Pa, m/s, ratio, m)
-      if (forecast != null && forecast.hourlyForecasts.isNotEmpty) {
-        final currentHour = forecast.hourlyForecasts.first;
-        if (currentHour.temperature != null) {
-          _currentTemp = currentHour.temperature; // Already in Kelvin
-          _tempSource = ConditionDataSource.forecast;
-        }
-        if (currentHour.humidity != null) {
-          _currentHumidity = currentHour.humidity; // ratio 0-1
-          _humiditySource = ConditionDataSource.forecast;
-        }
-        if (currentHour.pressure != null) {
-          _currentPressure = currentHour.pressure; // Pascals
-          _pressureSource = ConditionDataSource.forecast;
-        }
-        if (currentHour.windAvg != null) {
-          _currentWindSpeed = currentHour.windAvg; // m/s
-          _currentWindDirection = currentHour.windDirection;
-          _windSource = ConditionDataSource.forecast;
-        }
-        if (currentHour.precipProbability != null) {
-          // Forecast only has probability, not actual rain
-          _rainSource = ConditionDataSource.forecast;
-        }
-      }
-
-      // Get device source preferences from config
-      final customProps = widget.config.style.customProperties ?? {};
-      final tempSource = customProps['tempSource'] as String? ?? 'auto';
-      final humiditySource = customProps['humiditySource'] as String? ?? 'auto';
-      final pressureSource = customProps['pressureSource'] as String? ?? 'auto';
-      final windSource = customProps['windSource'] as String? ?? 'auto';
-      final lightSource = customProps['lightSource'] as String? ?? 'auto';
-      final rainSource = customProps['rainSource'] as String? ?? 'auto';
-      final lightningSource = customProps['lightningSource'] as String? ?? 'auto';
-
-      // Get merged observation with per-field source tracking
-      // This merges data from multiple devices (Air, Sky, Tempest) based on preferences
-      final mergedResult = widget.weatherFlowService.getMergedObservationWithSources(
-        tempSource: tempSource,
-        humiditySource: humiditySource,
-        pressureSource: pressureSource,
-        windSource: windSource,
-        lightSource: lightSource,
-        rainSource: rainSource,
-        lightningSource: lightningSource,
-      );
-
-      final observation = mergedResult?.observation ?? widget.weatherFlowService.currentObservation;
-
-      if (observation != null && mergedResult != null) {
-        // Helper to convert ObservationSource to ConditionDataSource
-        ConditionDataSource toConditionSource(ObservationSource src) => switch (src) {
-          ObservationSource.udp => ConditionDataSource.udp,
-          ObservationSource.websocket => ConditionDataSource.observation,
-          ObservationSource.rest => ConditionDataSource.observation,
-        };
-
-        if (observation.temperature != null) {
-          _currentTemp = observation.temperature; // Already in Kelvin
-          _tempSource = toConditionSource(mergedResult.tempSource);
-        }
-        if (observation.humidity != null) {
-          _currentHumidity = observation.humidity; // ratio 0-1
-          _humiditySource = toConditionSource(mergedResult.humiditySource);
-        }
-        if (observation.seaLevelPressure != null || observation.stationPressure != null) {
-          _currentPressure = observation.seaLevelPressure ?? observation.stationPressure; // Pascals
-          _pressureSource = toConditionSource(mergedResult.pressureSource);
-        }
-        if (observation.windAvg != null) {
-          _currentWindSpeed = observation.windAvg; // m/s
-          _currentWindGust = observation.windGust; // m/s
-          _currentWindDirection = observation.windDirection;
-          _windSource = toConditionSource(mergedResult.windSource);
-        }
-        if (observation.rainRate != null || observation.rainAccumulated != null) {
-          _rainLastHour = observation.rainRate; // meters
-          _rainToday = observation.rainAccumulated; // meters
-          _rainSource = toConditionSource(mergedResult.rainSource);
-        }
-      } else if (observation != null) {
-        // Fallback: use the observation's single source for all fields
-        final obsSource = switch (observation.source) {
-          ObservationSource.udp => ConditionDataSource.udp,
-          ObservationSource.websocket => ConditionDataSource.observation,
-          ObservationSource.rest => ConditionDataSource.observation,
-        };
-
-        if (observation.temperature != null) {
-          _currentTemp = observation.temperature;
-          _tempSource = obsSource;
-        }
-        if (observation.humidity != null) {
-          _currentHumidity = observation.humidity;
-          _humiditySource = obsSource;
-        }
-        if (observation.seaLevelPressure != null || observation.stationPressure != null) {
-          _currentPressure = observation.seaLevelPressure ?? observation.stationPressure;
-          _pressureSource = obsSource;
-        }
-        if (observation.windAvg != null) {
-          _currentWindSpeed = observation.windAvg;
-          _currentWindGust = observation.windGust;
-          _currentWindDirection = observation.windDirection;
-          _windSource = obsSource;
-        }
-        if (observation.rainRate != null || observation.rainAccumulated != null) {
-          _rainLastHour = observation.rainRate;
-          _rainToday = observation.rainAccumulated;
-          _rainSource = obsSource;
-        }
-      }
-
-      if (forecast != null) {
-        _parseForecasts(forecast);
-      } else {
-        setState(() {
-          _error = 'No forecast data available';
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = 'Error loading forecast: $e';
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  void _parseForecasts(dynamic forecast) {
-    final hourlyForecasts = <HourlyForecast>[];
-    final dailyForecasts = <DailyForecast>[];
-    final List<DaySunTimes> sunTimeDays = [];
-
-    // Get station coordinates for astronomical calculations
-    final station = widget.weatherFlowService.selectedStation;
-    final lat = station?.latitude ?? 0.0;
-    final lng = station?.longitude ?? 0.0;
-
-    // Debug: Check what the API returned
-    debugPrint('WeatherFlowForecast: Parsing forecast data');
-    debugPrint('  - Hourly forecasts from API: ${forecast.hourlyForecasts?.length ?? 0}');
-    debugPrint('  - Daily forecasts from API: ${forecast.dailyForecasts?.length ?? 0}');
-
-    try {
-      // Parse hourly forecasts - keep all values in SI base units
-      // Temperature: Kelvin, Pressure: Pascals, Wind: m/s, Humidity/Precip: ratio 0-1
-      final hourlyList = forecast.hourlyForecasts;
-      if (hourlyList != null && hourlyList.isNotEmpty) {
-        for (int i = 0; i < hourlyList.length && i < 72; i++) {
-          final hour = hourlyList[i];
-          hourlyForecasts.add(HourlyForecast(
-            hour: i,
-            temperature: hour.temperature,      // Kelvin
-            feelsLike: hour.feelsLike,          // Kelvin
-            conditions: hour.conditions,
-            longDescription: hour.conditions,
-            icon: hour.icon,
-            precipProbability: hour.precipProbability, // ratio 0-1
-            humidity: hour.humidity,            // ratio 0-1
-            pressure: hour.pressure,            // Pascals
-            windSpeed: hour.windAvg,            // m/s
-            windDirection: hour.windDirection,
-          ));
-        }
-      }
-
-      // Parse daily forecasts - keep all values in SI base units
-      final dailyList = forecast.dailyForecasts;
-      if (dailyList != null && dailyList.isNotEmpty) {
-        for (int i = 0; i < dailyList.length; i++) {
-          final day = dailyList[i];
-          dailyForecasts.add(DailyForecast(
-            dayIndex: i,
-            tempHigh: day.tempHigh,             // Kelvin
-            tempLow: day.tempLow,               // Kelvin
-            conditions: day.conditions,
-            icon: day.icon,
-            precipProbability: day.precipProbability, // ratio 0-1
-            precipIcon: day.precipIcon,
-            sunrise: day.sunrise,
-            sunset: day.sunset,
-          ));
-        }
-      }
-
-      // Calculate sun/moon times astronomically for each day
-      // Include yesterday (-1) so the arc can show yesterday's sunset in the morning
-      final now = DateTime.now();
-      final daysToCalculate = dailyForecasts.isNotEmpty ? dailyForecasts.length : 7;
-      for (int dayIndex = -1; dayIndex < daysToCalculate; dayIndex++) {
-        final date = now.add(Duration(days: dayIndex));
-
-        // Use SunCalc for accurate astronomical calculations
-        final sunTimes = SunCalc.getTimes(date, lat, lng);
-        final moonTimes = MoonCalc.getTimes(date, lat, lng);
-
-        sunTimeDays.add(DaySunTimes(
-          sunrise: sunTimes.sunrise,
-          sunset: sunTimes.sunset,
-          dawn: sunTimes.dawn,
-          dusk: sunTimes.dusk,
-          nauticalDawn: sunTimes.nauticalDawn,
-          nauticalDusk: sunTimes.nauticalDusk,
-          solarNoon: sunTimes.solarNoon,
-          goldenHour: sunTimes.goldenHour,
-          goldenHourEnd: sunTimes.goldenHourEnd,
-          night: sunTimes.night,
-          nightEnd: sunTimes.nightEnd,
-          moonrise: moonTimes.rise,
-          moonset: moonTimes.set,
-        ));
-      }
-
-      // Get current moon phase
-      final moonIllum = MoonCalc.getIllumination(now);
-
-      setState(() {
-        _hourlyForecasts = hourlyForecasts;
-        _dailyForecasts = dailyForecasts;
-        _sunMoonTimes = SunMoonTimes(
-          days: sunTimeDays,
-          todayIndex: 1, // Index 0 is yesterday, index 1 is today
-          moonPhase: moonIllum.phase,
-          moonFraction: moonIllum.fraction,
-          moonAngle: moonIllum.angle,
-        );
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Error parsing forecast: $e';
-        _isLoading = false;
-      });
     }
   }
 
@@ -472,10 +161,19 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
     final showDailyForecast = customProps['showDailyForecast'] as bool? ?? true;
     final use24HourFormat = customProps['use24HourFormat'] as bool? ?? false;
 
-    // Get the ConversionService from WeatherFlowService - respects user preferences
-    final conversions = widget.weatherFlowService.conversions;
+    // Get data from service
+    final service = widget.weatherFlowService;
+    final conversions = service.conversions;
 
-    if (_isLoading) {
+    // Get pre-parsed display data from service
+    final hourlyForecasts = service.displayHourlyForecasts;
+    final dailyForecasts = service.displayDailyForecasts;
+    final sunMoonTimes = service.sunMoonTimes;
+
+    // Get current conditions from observation
+    final observation = service.currentObservation;
+
+    if (service.isLoading && hourlyForecasts.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -488,7 +186,7 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
       );
     }
 
-    if (_error != null) {
+    if (service.error != null && hourlyForecasts.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -496,13 +194,13 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
             Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
             const SizedBox(height: 8),
             Text(
-              _error!,
+              service.error!,
               style: TextStyle(color: Colors.red[300]),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: _loadForecast,
+              onPressed: _forceRefresh,
               icon: const Icon(Icons.refresh),
               label: const Text('Retry'),
             ),
@@ -511,16 +209,11 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
       );
     }
 
-    // Convert all SI values to user's preferred units using ConversionService
-    // Temperature: K -> user pref (°C, °F, K)
-    // Pressure: Pa -> user pref (hPa, mbar, inHg, mmHg)
-    // Wind: m/s -> user pref (kn, m/s, km/h, mph, Bft)
-    // Rainfall: m -> user pref (mm, in, cm)
-    // Humidity: ratio -> % (always)
-
-    // Convert hourly forecast values
-    final convertedHourly = _hourlyForecasts.map((h) => HourlyForecast(
+    // Convert hourly forecast values from SI base units to user's preferred units
+    // SI base: Kelvin, Pascals, m/s, meters, ratio 0-1
+    final convertedHourly = hourlyForecasts.map((h) => HourlyForecast(
       hour: h.hour,
+      time: h.time,
       temperature: h.temperature != null ? conversions.convertTemperature(h.temperature!) : null,
       feelsLike: h.feelsLike != null ? conversions.convertTemperature(h.feelsLike!) : null,
       conditions: h.conditions,
@@ -533,9 +226,10 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
       windDirection: h.windDirection,
     )).toList();
 
-    // Convert daily forecast values
-    final convertedDaily = _dailyForecasts.map((d) => DailyForecast(
+    // Convert daily forecast values from SI base units
+    final convertedDaily = dailyForecasts.map((d) => DailyForecast(
       dayIndex: d.dayIndex,
+      date: d.date,
       tempHigh: d.tempHigh != null ? conversions.convertTemperature(d.tempHigh!) : null,
       tempLow: d.tempLow != null ? conversions.convertTemperature(d.tempLow!) : null,
       conditions: d.conditions,
@@ -546,23 +240,49 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
       sunset: d.sunset,
     )).toList();
 
+    // Convert current conditions from observation (SI units)
+    final currentTemp = observation?.temperature != null
+        ? conversions.convertTemperature(observation!.temperature!)
+        : null;
+    final currentHumidity = observation?.humidity != null
+        ? conversions.convertHumidity(observation!.humidity!)
+        : null;
+    final currentPressure = observation?.seaLevelPressure != null
+        ? conversions.convertPressure(observation!.seaLevelPressure!)
+        : (observation?.stationPressure != null
+            ? conversions.convertPressure(observation!.stationPressure!)
+            : null);
+    final currentWindSpeed = observation?.windAvg != null
+        ? conversions.convertWindSpeed(observation!.windAvg!)
+        : null;
+    final currentWindGust = observation?.windGust != null
+        ? conversions.convertWindSpeed(observation!.windGust!)
+        : null;
+    final currentWindDirection = observation?.windDirection;
+    final rainLastHour = observation?.rainRate != null
+        ? conversions.convertRainfall(observation!.rainRate!)
+        : null;
+    final rainToday = observation?.rainAccumulated != null
+        ? conversions.convertRainfall(observation!.rainAccumulated!)
+        : null;
+
     return Stack(
       children: [
         // Main forecast widget with converted values and unit symbols from preferences
         WeatherFlowForecast(
-          currentTemp: _currentTemp != null ? conversions.convertTemperature(_currentTemp!) : null,
-          currentHumidity: _currentHumidity != null ? conversions.convertHumidity(_currentHumidity!) : null,
-          currentPressure: _currentPressure != null ? conversions.convertPressure(_currentPressure!) : null,
-          currentWindSpeed: _currentWindSpeed != null ? conversions.convertWindSpeed(_currentWindSpeed!) : null,
-          currentWindGust: _currentWindGust != null ? conversions.convertWindSpeed(_currentWindGust!) : null,
-          currentWindDirection: _currentWindDirection,
-          rainLastHour: _rainLastHour != null ? conversions.convertRainfall(_rainLastHour!) : null,
-          rainToday: _rainToday != null ? conversions.convertRainfall(_rainToday!) : null,
-          tempSource: _tempSource,
-          humiditySource: _humiditySource,
-          pressureSource: _pressureSource,
-          windSource: _windSource,
-          rainSource: _rainSource,
+          currentTemp: currentTemp,
+          currentHumidity: currentHumidity,
+          currentPressure: currentPressure,
+          currentWindSpeed: currentWindSpeed,
+          currentWindGust: currentWindGust,
+          currentWindDirection: currentWindDirection,
+          rainLastHour: rainLastHour,
+          rainToday: rainToday,
+          tempSource: observation?.temperature != null ? ConditionDataSource.observation : ConditionDataSource.none,
+          humiditySource: observation?.humidity != null ? ConditionDataSource.observation : ConditionDataSource.none,
+          pressureSource: observation?.seaLevelPressure != null || observation?.stationPressure != null ? ConditionDataSource.observation : ConditionDataSource.none,
+          windSource: observation?.windAvg != null ? ConditionDataSource.observation : ConditionDataSource.none,
+          rainSource: observation?.rainRate != null || observation?.rainAccumulated != null ? ConditionDataSource.observation : ConditionDataSource.none,
           // Unit symbols from user preferences
           tempUnit: conversions.temperatureSymbol,
           pressureUnit: conversions.pressureSymbol,
@@ -574,7 +294,7 @@ class _WeatherFlowForecastToolState extends State<WeatherFlowForecastTool> {
           daysToShow: daysToShow,
           primaryColor: _getPrimaryColor(context),
           showCurrentConditions: showCurrentConditions,
-          sunMoonTimes: _sunMoonTimes,
+          sunMoonTimes: sunMoonTimes,
           showSunMoonArc: showSunMoonArc,
           showDailyForecast: showDailyForecast,
           use24HourFormat: use24HourFormat,

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:weatherflow_core/weatherflow_core.dart' hide HourlyForecast;
+import 'package:weatherflow_core/weatherflow_core.dart' hide HourlyForecast, DailyForecast;
 import 'storage_service.dart';
 import 'websocket_service.dart';
 import 'udp_service.dart';
@@ -46,6 +46,7 @@ class WeatherFlowService extends ChangeNotifier {
   bool _isRefreshing = false;
   SunMoonTimes? _sunMoonTimes;
   List<HourlyForecast> _displayHourlyForecasts = [];
+  List<DailyForecast> _displayDailyForecasts = [];
 
   WeatherFlowService({
     required StorageService storage,
@@ -113,6 +114,9 @@ class WeatherFlowService extends ChangeNotifier {
 
   /// Hourly forecasts formatted for display
   List<HourlyForecast> get displayHourlyForecasts => _displayHourlyForecasts;
+
+  /// Daily forecasts formatted for display
+  List<DailyForecast> get displayDailyForecasts => _displayDailyForecasts;
 
   /// Marine data (stub - WeatherFlow doesn't provide marine data)
   MarineData? get marineData => null;
@@ -777,6 +781,33 @@ class WeatherFlowService extends ChangeNotifier {
         conditions: h.conditions,
         beaufort: beaufort,
         isDay: isDay,
+      );
+    }).toList();
+
+    // Also update daily forecasts
+    _updateDisplayDailyForecasts();
+  }
+
+  /// Convert API daily forecasts to display format
+  void _updateDisplayDailyForecasts() {
+    if (_currentForecast == null) {
+      _displayDailyForecasts = [];
+      return;
+    }
+
+    int dayIndex = 0;
+    _displayDailyForecasts = _currentForecast!.dailyForecasts.map((d) {
+      return DailyForecast(
+        dayIndex: dayIndex++,
+        date: d.date,
+        tempHigh: d.tempHigh,
+        tempLow: d.tempLow,
+        conditions: d.conditions,
+        icon: d.icon ?? 'clear-day',
+        precipProbability: d.precipProbability,
+        precipIcon: d.precipIcon,
+        sunrise: d.sunrise,
+        sunset: d.sunset,
       );
     }).toList();
   }

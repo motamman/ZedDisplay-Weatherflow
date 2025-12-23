@@ -4,6 +4,8 @@
 
 import 'package:flutter/material.dart';
 import 'forecast_models.dart';
+import '../services/daylight_service.dart';
+import '../utils/date_time_formatter.dart';
 
 /// Data source for current condition values
 enum ConditionDataSource {
@@ -144,29 +146,8 @@ class WeatherFlowForecast extends StatefulWidget {
 }
 
 class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
-  /// Format time based on use24HourFormat setting
-  String _formatTime(DateTime time, {bool includeMinutes = true}) {
-    final hour = time.hour;
-    final minute = time.minute;
-
-    if (widget.use24HourFormat) {
-      // 24-hour format: 14:30 or 14:00
-      if (includeMinutes) {
-        return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
-      } else {
-        return '${hour.toString().padLeft(2, '0')}:00';
-      }
-    } else {
-      // 12-hour format: 2:30 PM or 2 PM
-      final ampm = hour < 12 ? 'AM' : 'PM';
-      final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
-      if (includeMinutes && minute != 0) {
-        return '$displayHour:${minute.toString().padLeft(2, '0')} $ampm';
-      } else {
-        return '$displayHour $ampm';
-      }
-    }
-  }
+  /// Currently expanded day index (null = none expanded, shows today's arc)
+  int? _expandedDayIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -192,8 +173,14 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
                 ],
 
                 // Sun/Moon arc (beneath header, above current conditions)
+                // Shows selected day if expanded, otherwise today
                 if (widget.showSunMoonArc && widget.sunMoonTimes != null) ...[
-                  _SunMoonArc(times: widget.sunMoonTimes!, isDark: isDark, use24HourFormat: widget.use24HourFormat),
+                  _SunMoonArc(
+                    times: widget.sunMoonTimes!,
+                    isDark: isDark,
+                    use24HourFormat: widget.use24HourFormat,
+                    selectedDayIndex: _expandedDayIndex,
+                  ),
                   const SizedBox(height: 8),
                 ],
 
@@ -201,13 +188,11 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
                 if (widget.showCurrentConditions) ...[
                   _buildCurrentConditions(context, isDark),
                   const SizedBox(height: 6),
-                  _buildLegend(context, isDark),
-                  const SizedBox(height: 6),
                   Divider(color: isDark ? Colors.white24 : Colors.black12),
                   const SizedBox(height: 4),
                 ],
 
-                // Daily forecast only (hourly removed)
+                // Daily forecast with accordion hourly expansion
                 if (widget.showDailyForecast) ...[
                   if (useScroll)
                     _buildDailyForecast(context, isDark, shrinkWrap: true)
@@ -279,7 +264,6 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           'Temp',
           Colors.orange,
           isDark,
-          dataSource: widget.tempSource,
         ),
         _buildConditionItem(
           context,
@@ -288,7 +272,6 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           'Humidity',
           Colors.cyan,
           isDark,
-          dataSource: widget.humiditySource,
         ),
         _buildConditionItem(
           context,
@@ -297,7 +280,6 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           '${widget.rainUnit} 1h/day',
           Colors.blue,
           isDark,
-          dataSource: widget.rainSource,
         ),
         _buildConditionItem(
           context,
@@ -306,7 +288,6 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           widget.pressureUnit,
           Colors.purple,
           isDark,
-          dataSource: widget.pressureSource,
         ),
         _buildConditionItem(
           context,
@@ -320,7 +301,6 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
           Colors.teal,
           isDark,
           subtitle2: widget.currentWindDirection != null ? _getWindDirectionLabel(widget.currentWindDirection!) : null,
-          dataSource: widget.windSource,
         ),
       ],
     );
@@ -334,38 +314,19 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
     Color color,
     bool isDark, {
     String? subtitle2,
-    ConditionDataSource dataSource = ConditionDataSource.none,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, color: color, size: 20),
         const SizedBox(height: 4),
-        // Value with data source indicator dot
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: isDark ? Colors.white : Colors.black87,
-              ),
-            ),
-            if (dataSource != ConditionDataSource.none) ...[
-              const SizedBox(width: 3),
-              Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: dataSource.color,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ],
-          ],
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: isDark ? Colors.white : Colors.black87,
+          ),
         ),
         Text(
           label,
@@ -386,210 +347,11 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
     );
   }
 
-  Widget _buildLegend(BuildContext context, bool isDark) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        _buildLegendItem('Live', Colors.green, isDark),
-        const SizedBox(width: 12),
-        _buildLegendItem('Observed', Colors.blue, isDark),
-        const SizedBox(width: 12),
-        _buildLegendItem('Forecast', Colors.orange, isDark),
-      ],
-    );
-  }
-
-  Widget _buildLegendItem(String label, Color color, bool isDark) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 10,
-            color: isDark ? Colors.white60 : Colors.black54,
-          ),
-        ),
-      ],
-    );
-  }
-
   String _getWindDirectionLabel(double degrees) {
     const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
                         'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
     final index = ((degrees + 11.25) % 360 / 22.5).floor();
     return directions[index];
-  }
-
-  Widget _buildHourlyForecast(BuildContext context, bool isDark) {
-    if (widget.hourlyForecasts.isEmpty) {
-      return Center(
-        child: Text(
-          'No forecast data available',
-          style: TextStyle(
-            color: isDark ? Colors.white54 : Colors.black45,
-          ),
-        ),
-      );
-    }
-
-    final forecasts = widget.hourlyForecasts.take(widget.hoursToShow).toList();
-    final now = DateTime.now();
-
-    // Build list of items (forecasts + sunrise/sunset markers)
-    final items = <_HourlyItem>[];
-
-    // Add forecasts
-    for (final forecast in forecasts) {
-      final forecastTime = now.add(Duration(hours: forecast.hour));
-      items.add(_HourlyItem(
-        time: forecastTime,
-        type: _HourlyItemType.forecast,
-        forecast: forecast,
-      ));
-    }
-
-    // Add sunrise if within range
-    if (widget.sunMoonTimes?.sunrise != null) {
-      final sunrise = widget.sunMoonTimes!.sunrise!.toLocal();
-      final firstHour = now;
-      final lastHour = now.add(Duration(hours: widget.hoursToShow));
-      if (sunrise.isAfter(firstHour) && sunrise.isBefore(lastHour)) {
-        items.add(_HourlyItem(
-          time: sunrise,
-          type: _HourlyItemType.sunrise,
-        ));
-      }
-    }
-
-    // Add sunset if within range
-    if (widget.sunMoonTimes?.sunset != null) {
-      final sunset = widget.sunMoonTimes!.sunset!.toLocal();
-      final firstHour = now;
-      final lastHour = now.add(Duration(hours: widget.hoursToShow));
-      if (sunset.isAfter(firstHour) && sunset.isBefore(lastHour)) {
-        items.add(_HourlyItem(
-          time: sunset,
-          type: _HourlyItemType.sunset,
-        ));
-      }
-    }
-
-    // Sort by time
-    items.sort((a, b) => a.time.compareTo(b.time));
-
-    return ListView.builder(
-      scrollDirection: Axis.horizontal,
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        switch (item.type) {
-          case _HourlyItemType.forecast:
-            return _buildHourCard(context, item.forecast!, isDark);
-          case _HourlyItemType.sunrise:
-            return _buildSunriseCard(context, item.time, isDark);
-          case _HourlyItemType.sunset:
-            return _buildSunsetCard(context, item.time, isDark);
-        }
-      },
-    );
-  }
-
-  Widget _buildSunriseCard(BuildContext context, DateTime time, bool isDark) {
-    return Container(
-      width: 48,
-      margin: const EdgeInsets.only(right: 4),
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 3),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [
-            Colors.indigo.shade900.withValues(alpha: 0.3),
-            Colors.amber.shade200.withValues(alpha: 0.3),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.amber.shade400.withValues(alpha: 0.5)),
-      ),
-      child: Column(
-        children: [
-          Text(
-            _formatTime(time),
-            style: TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.w600,
-              color: isDark ? Colors.white70 : Colors.black54,
-            ),
-          ),
-          const Spacer(),
-          Icon(Icons.wb_sunny, size: 28, color: Colors.amber.shade400),
-          const SizedBox(height: 4),
-          Text(
-            'Sunrise',
-            style: TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.w500,
-              color: Colors.amber.shade400,
-            ),
-          ),
-          const Spacer(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSunsetCard(BuildContext context, DateTime time, bool isDark) {
-    return Container(
-      width: 48,
-      margin: const EdgeInsets.only(right: 4),
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 3),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.deepOrange.shade300.withValues(alpha: 0.3),
-            Colors.indigo.shade900.withValues(alpha: 0.3),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.deepOrange.shade400.withValues(alpha: 0.5)),
-      ),
-      child: Column(
-        children: [
-          Text(
-            _formatTime(time),
-            style: TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.w600,
-              color: isDark ? Colors.white70 : Colors.black54,
-            ),
-          ),
-          const Spacer(),
-          Icon(Icons.nights_stay, size: 28, color: Colors.deepOrange.shade400),
-          const SizedBox(height: 4),
-          Text(
-            'Sunset',
-            style: TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.w500,
-              color: Colors.deepOrange.shade400,
-            ),
-          ),
-          const Spacer(),
-        ],
-      ),
-    );
   }
 
   Widget _buildDailyForecast(BuildContext context, bool isDark, {bool shrinkWrap = false}) {
@@ -613,148 +375,243 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
       itemCount: forecasts.length,
       itemBuilder: (context, index) {
         final forecast = forecasts[index];
-        return _buildDayCard(context, forecast, isDark);
+        final isExpanded = _expandedDayIndex == index;
+
+        // Get hourly forecasts for this day
+        final dayHourlyForecasts = _getHourlyForecastsForDay(forecast.date);
+
+        return _buildDayCard(
+          context,
+          forecast,
+          isDark,
+          isExpanded: isExpanded,
+          hourlyForecasts: dayHourlyForecasts,
+          onTap: () {
+            setState(() {
+              // Toggle: if already expanded, collapse; otherwise expand this day
+              _expandedDayIndex = isExpanded ? null : index;
+            });
+          },
+        );
       },
     );
   }
 
-  Widget _buildDayCard(BuildContext context, DailyForecast forecast, bool isDark) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-      decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.05)
-            : Colors.black.withValues(alpha: 0.03),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.1)
-              : Colors.black.withValues(alpha: 0.1),
-        ),
-      ),
-      child: Row(
-        children: [
-          // Day name
-          SizedBox(
-            width: 65,
-            child: Text(
-              forecast.dayName,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white70 : Colors.black54,
+  /// Get hourly forecasts that fall on a specific day
+  List<HourlyForecast> _getHourlyForecastsForDay(DateTime? date) {
+    if (date == null) return [];
+
+    return widget.hourlyForecasts.where((h) {
+      if (h.time == null) return false;
+      return h.time!.year == date.year &&
+             h.time!.month == date.month &&
+             h.time!.day == date.day;
+    }).toList();
+  }
+
+  Widget _buildDayCard(
+    BuildContext context,
+    DailyForecast forecast,
+    bool isDark, {
+    bool isExpanded = false,
+    List<HourlyForecast> hourlyForecasts = const [],
+    VoidCallback? onTap,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Day header (clickable)
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 4),
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+            decoration: BoxDecoration(
+              color: isExpanded
+                  ? (isDark ? widget.primaryColor.withValues(alpha: 0.2) : widget.primaryColor.withValues(alpha: 0.1))
+                  : (isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.03)),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: isExpanded
+                    ? widget.primaryColor.withValues(alpha: 0.5)
+                    : (isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.1)),
               ),
             ),
-          ),
-          // Weather icon
-          SizedBox(
-            width: 24,
-            height: 24,
-            child: Icon(
-              forecast.fallbackIcon,
-              color: _getWeatherIconColor(forecast.icon),
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Conditions
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+            child: Row(
               children: [
-                Text(
-                  forecast.conditions ?? '',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: isDark ? Colors.white60 : Colors.black45,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+                // Expand/collapse indicator
+                Icon(
+                  isExpanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: isDark ? Colors.white54 : Colors.black45,
                 ),
-                // Sunrise/Sunset times
-                if (forecast.sunrise != null || forecast.sunset != null)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (forecast.sunrise != null) ...[
-                        Icon(Icons.wb_sunny, size: 9, color: Colors.amber.shade400),
-                        const SizedBox(width: 2),
-                        Text(
-                          _formatTime(forecast.sunrise!.toLocal()),
-                          style: TextStyle(fontSize: 9, color: isDark ? Colors.white38 : Colors.black38),
-                        ),
-                      ],
-                      if (forecast.sunrise != null && forecast.sunset != null)
-                        const SizedBox(width: 6),
-                      if (forecast.sunset != null) ...[
-                        Icon(Icons.nights_stay, size: 9, color: Colors.indigo.shade300),
-                        const SizedBox(width: 2),
-                        Text(
-                          _formatTime(forecast.sunset!.toLocal()),
-                          style: TextStyle(fontSize: 9, color: isDark ? Colors.white38 : Colors.black38),
-                        ),
-                      ],
-                    ],
-                  ),
-              ],
-            ),
-          ),
-          // Precip probability
-          if (forecast.precipProbability != null && forecast.precipProbability! > 0)
-            Container(
-              margin: const EdgeInsets.only(right: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.water_drop,
-                    size: 10,
-                    color: Colors.blue.shade300,
-                  ),
-                  Text(
-                    '${forecast.precipProbability!.toStringAsFixed(0)}%',
+                const SizedBox(width: 4),
+                // Day name
+                SizedBox(
+                  width: 55,
+                  child: Text(
+                    forecast.dayName,
                     style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.blue.shade300,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.white70 : Colors.black54,
                     ),
                   ),
-                ],
-              ),
-            ),
-          // High/Low temps
-          SizedBox(
-            width: 80,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Text(
-                  forecast.tempHigh != null ? '${forecast.tempHigh!.toStringAsFixed(0)}${widget.tempUnit}' : '--',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : Colors.black87,
+                ),
+                // Weather icon
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: Icon(
+                    forecast.fallbackIcon,
+                    color: _getWeatherIconColor(forecast.icon),
+                    size: 24,
                   ),
                 ),
-                Text(
-                  '/',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? Colors.white38 : Colors.black26,
+                const SizedBox(width: 8),
+                // Conditions
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        forecast.conditions ?? '',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isDark ? Colors.white60 : Colors.black45,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      // Sunrise/Sunset times
+                      if (forecast.sunrise != null || forecast.sunset != null)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (forecast.sunrise != null) ...[
+                              Icon(Icons.wb_sunny, size: 9, color: Colors.amber.shade400),
+                              const SizedBox(width: 2),
+                              Text(
+                                DateTimeFormatter.formatTime(
+                                  widget.sunMoonTimes?.toLocationTime(forecast.sunrise!) ?? forecast.sunrise!.toLocal(),
+                                  use24Hour: widget.use24HourFormat,
+                                ),
+                                style: TextStyle(fontSize: 9, color: isDark ? Colors.white38 : Colors.black38),
+                              ),
+                            ],
+                            if (forecast.sunrise != null && forecast.sunset != null)
+                              const SizedBox(width: 6),
+                            if (forecast.sunset != null) ...[
+                              Icon(Icons.nights_stay, size: 9, color: Colors.indigo.shade300),
+                              const SizedBox(width: 2),
+                              Text(
+                                DateTimeFormatter.formatTime(
+                                  widget.sunMoonTimes?.toLocationTime(forecast.sunset!) ?? forecast.sunset!.toLocal(),
+                                  use24Hour: widget.use24HourFormat,
+                                ),
+                                style: TextStyle(fontSize: 9, color: isDark ? Colors.white38 : Colors.black38),
+                              ),
+                            ],
+                          ],
+                        ),
+                    ],
                   ),
                 ),
-                Text(
-                  forecast.tempLow != null ? '${forecast.tempLow!.toStringAsFixed(0)}${widget.tempUnit}' : '--',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? Colors.white54 : Colors.black45,
+                // Precip probability
+                if (forecast.precipProbability != null && forecast.precipProbability! > 0)
+                  Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.water_drop,
+                          size: 10,
+                          color: Colors.blue.shade300,
+                        ),
+                        Text(
+                          '${forecast.precipProbability!.toStringAsFixed(0)}%',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.blue.shade300,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                // High/Low temps
+                SizedBox(
+                  width: 80,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        forecast.tempHigh != null ? '${forecast.tempHigh!.toStringAsFixed(0)}${widget.tempUnit}' : '--',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                      Text(
+                        '/',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isDark ? Colors.white38 : Colors.black26,
+                        ),
+                      ),
+                      Text(
+                        forecast.tempLow != null ? '${forecast.tempLow!.toStringAsFixed(0)}${widget.tempUnit}' : '--',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isDark ? Colors.white54 : Colors.black45,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
+        ),
+        // Expanded hourly forecast
+        if (isExpanded) ...[
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            height: hourlyForecasts.isNotEmpty ? 100 : 40,
+            margin: const EdgeInsets.only(bottom: 8, left: 8, right: 8),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.03)
+                  : Colors.black.withValues(alpha: 0.02),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: hourlyForecasts.isNotEmpty
+                ? _buildHourlyRow(hourlyForecasts, isDark)
+                : Center(
+                    child: Text(
+                      'No hourly data for this day',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isDark ? Colors.white38 : Colors.black38,
+                      ),
+                    ),
+                  ),
+          ),
         ],
-      ),
+      ],
+    );
+  }
+
+  /// Build horizontal scrolling row of hourly forecasts
+  Widget _buildHourlyRow(List<HourlyForecast> forecasts, bool isDark) {
+    return ListView.builder(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      itemCount: forecasts.length,
+      itemBuilder: (context, index) {
+        return _buildHourCard(context, forecasts[index], isDark);
+      },
     );
   }
 
@@ -768,9 +625,8 @@ class _WeatherFlowForecastState extends State<WeatherFlowForecast> {
     final now = DateTime.now();
     final forecastTime = now.add(Duration(hours: forecast.hour));
     final isToday = forecastTime.day == now.day && forecastTime.month == now.month;
-    final dayAbbrevs = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final dayAbbrev = dayAbbrevs[forecastTime.weekday - 1];
-    final timeStr = _formatTime(forecastTime, includeMinutes: false);
+    final dayAbbrev = DateTimeFormatter.getDayAbbrev(forecastTime);
+    final timeStr = DateTimeFormatter.formatTime(forecastTime, use24Hour: widget.use24HourFormat, includeMinutes: false);
     final hourLabel = forecast.hour == 0
         ? 'Now'
         : isToday
@@ -900,12 +756,41 @@ class _SunMoonArc extends StatelessWidget {
   final SunMoonTimes times;
   final bool isDark;
   final bool use24HourFormat;
+  final int? selectedDayIndex; // null = today, 0 = first day, etc.
 
-  const _SunMoonArc({required this.times, required this.isDark, this.use24HourFormat = false});
+  const _SunMoonArc({
+    required this.times,
+    required this.isDark,
+    this.use24HourFormat = false,
+    this.selectedDayIndex,
+  });
 
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now().toUtc();
+
+    // Calculate the center time for the arc
+    // Today (selectedDayIndex == null or 0) centers on current time
+    // Future days center on solar noon
+    DateTime arcCenter;
+    bool showNoonIndicator = false;
+
+    if (selectedDayIndex != null && selectedDayIndex! > 0) {
+      // Future day selected - center on noon
+      final dayIndex = selectedDayIndex! + times.todayIndex;
+      if (dayIndex >= 0 && dayIndex < times.days.length) {
+        final selectedDay = times.days[dayIndex];
+        // Use solar noon if available, otherwise estimate noon
+        arcCenter = selectedDay.solarNoon ??
+            DateTime(now.year, now.month, now.day + selectedDayIndex!, 12, 0).toUtc();
+      } else {
+        arcCenter = now;
+      }
+      showNoonIndicator = true;
+    } else {
+      // Today or no selection - center on current time
+      arcCenter = now;
+    }
 
     return SizedBox(
       height: 70,
@@ -915,18 +800,19 @@ class _SunMoonArc extends StatelessWidget {
             size: Size(constraints.maxWidth, constraints.maxHeight),
             painter: _SunMoonArcPainter(
               times: times,
-              now: now,
+              now: arcCenter,
               isDark: isDark,
               use24HourFormat: use24HourFormat,
+              isSelectedDay: showNoonIndicator,
             ),
-            child: _buildIconsOverlay(constraints, now),
+            child: _buildIconsOverlay(constraints, arcCenter, showNoonIndicator),
           );
         },
       ),
     );
   }
 
-  Widget _buildIconsOverlay(BoxConstraints constraints, DateTime now) {
+  Widget _buildIconsOverlay(BoxConstraints constraints, DateTime now, bool isSelectedDay) {
     final width = constraints.maxWidth;
     final height = constraints.maxHeight;
 
@@ -1016,7 +902,7 @@ class _SunMoonArc extends StatelessWidget {
         }
       }
 
-      // Moonrise marker
+      // Moonrise marker - use per-day moon phase
       if (day.moonrise != null && day.moonrise!.isAfter(arcStart) && day.moonrise!.isBefore(arcEnd)) {
         final moonrisePos = getArcPosition(day.moonrise!, size: 20);
         if (moonrisePos != null) {
@@ -1032,7 +918,7 @@ class _SunMoonArc extends StatelessWidget {
                     color: Colors.blueGrey.shade300,
                     size: 8,
                   ),
-                  _buildMoonIcon(times.moonPhase, times.moonFraction, size: 14),
+                  _buildMoonIcon(day.moonPhase, day.moonFraction, size: 14),
                 ],
               ),
             ),
@@ -1040,7 +926,7 @@ class _SunMoonArc extends StatelessWidget {
         }
       }
 
-      // Moonset marker
+      // Moonset marker - use per-day moon phase
       if (day.moonset != null && day.moonset!.isAfter(arcStart) && day.moonset!.isBefore(arcEnd)) {
         final moonsetPos = getArcPosition(day.moonset!, size: 20);
         if (moonsetPos != null) {
@@ -1051,7 +937,7 @@ class _SunMoonArc extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildMoonIcon(times.moonPhase, times.moonFraction, size: 14),
+                  _buildMoonIcon(day.moonPhase, day.moonFraction, size: 14),
                   Icon(
                     Icons.arrow_downward,
                     color: Colors.blueGrey.shade400,
@@ -1086,7 +972,7 @@ class _SunMoonArc extends StatelessWidget {
               Positioned(
                 left: transitPos.$1,
                 top: transitPos.$2 - 6, // Slightly higher to show it's at peak
-                child: _buildMoonIcon(times.moonPhase, times.moonFraction, size: 20),
+                child: _buildMoonIcon(day.moonPhase, day.moonFraction, size: 20),
               ),
             );
           }
@@ -1094,9 +980,11 @@ class _SunMoonArc extends StatelessWidget {
       }
     }
 
-    // "Now" indicator at center
+    // Center indicator - "now" for today, "noon" for selected day
     final nowX = width * 0.5;
     final baseY = height - 10;
+    final indicatorColor = isSelectedDay ? Colors.amber : Colors.red;
+    final indicatorLabel = isSelectedDay ? 'noon' : 'now';
     children.add(
       Positioned(
         left: nowX - 12,
@@ -1104,18 +992,18 @@ class _SunMoonArc extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'now',
+            Text(
+              indicatorLabel,
               style: TextStyle(
                 fontSize: 8,
-                color: Colors.red,
+                color: indicatorColor,
                 fontWeight: FontWeight.bold,
               ),
             ),
             Container(
               width: 2,
               height: 10,
-              color: Colors.red,
+              color: indicatorColor,
             ),
           ],
         ),
@@ -1131,17 +1019,24 @@ class _SunMoonArc extends StatelessWidget {
       painter: _MoonPhasePainter(
         phase: phase ?? 0.5,
         fraction: fraction ?? 0.5,
+        isSouthernHemisphere: times.isSouthernHemisphere,
       ),
     );
   }
 }
 
 /// Custom painter for moon phase showing illumination
+/// Handles both Northern and Southern hemisphere orientations
 class _MoonPhasePainter extends CustomPainter {
   final double phase;
   final double fraction;
+  final bool isSouthernHemisphere;
 
-  _MoonPhasePainter({required this.phase, required this.fraction});
+  _MoonPhasePainter({
+    required this.phase,
+    required this.fraction,
+    this.isSouthernHemisphere = false,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1166,7 +1061,12 @@ class _MoonPhasePainter extends CustomPainter {
       return;
     }
 
-    final bool isWaxing = phase < 0.5;
+    // Determine waxing/waning - flip for Southern Hemisphere
+    bool isWaxing = phase < 0.5;
+    if (isSouthernHemisphere) {
+      isWaxing = !isWaxing; // Moon appears flipped in Southern Hemisphere
+    }
+
     final termWidth = radius * (2.0 * fraction - 1.0);
     final isGibbous = fraction > 0.5;
 
@@ -1211,7 +1111,9 @@ class _MoonPhasePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _MoonPhasePainter oldDelegate) {
-    return oldDelegate.phase != phase || oldDelegate.fraction != fraction;
+    return oldDelegate.phase != phase ||
+           oldDelegate.fraction != fraction ||
+           oldDelegate.isSouthernHemisphere != isSouthernHemisphere;
   }
 }
 
@@ -1221,35 +1123,15 @@ class _SunMoonArcPainter extends CustomPainter {
   final DateTime now;
   final bool isDark;
   final bool use24HourFormat;
+  final bool isSelectedDay;
 
   _SunMoonArcPainter({
     required this.times,
     required this.now,
     required this.isDark,
     this.use24HourFormat = false,
+    this.isSelectedDay = false,
   });
-
-  /// Format time based on use24HourFormat setting
-  String _formatTime(DateTime time, {bool includeMinutes = true}) {
-    final hour = time.hour;
-    final minute = time.minute;
-
-    if (use24HourFormat) {
-      if (includeMinutes) {
-        return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
-      } else {
-        return '${hour.toString().padLeft(2, '0')}:00';
-      }
-    } else {
-      final ampm = hour < 12 ? 'AM' : 'PM';
-      final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
-      if (includeMinutes && minute != 0) {
-        return '$displayHour:${minute.toString().padLeft(2, '0')} $ampm';
-      } else {
-        return '$displayHour $ampm';
-      }
-    }
-  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1270,32 +1152,43 @@ class _SunMoonArcPainter extends CustomPainter {
     }
 
     // Add segments for each available day (handles arc spanning midnight)
+    // Uses DaylightService colors for consistency with forecast spinner
     for (final day in times.days) {
       // Night before dawn
       if (day.nauticalDawn != null) {
         final nightStart = day.nauticalDawn!.subtract(const Duration(hours: 6));
-        addSegment(nightStart, day.nauticalDawn, Colors.indigo.shade900.withValues(alpha: 0.5));
+        addSegment(nightStart, day.nauticalDawn,
+            DaylightService.periodColors[DaylightPeriod.night]!.withValues(alpha: 0.5));
       }
       // Nautical twilight (dawn)
-      addSegment(day.nauticalDawn, day.dawn, Colors.indigo.shade700);
+      addSegment(day.nauticalDawn, day.dawn,
+          DaylightService.periodColors[DaylightPeriod.nauticalTwilight]!);
       // Civil twilight (dawn)
-      addSegment(day.dawn, day.sunrise, Colors.indigo.shade400);
+      addSegment(day.dawn, day.sunrise,
+          DaylightService.periodColors[DaylightPeriod.civilTwilight]!);
       // Golden hour (morning)
-      addSegment(day.sunrise, day.goldenHourEnd, Colors.orange.shade300);
+      addSegment(day.sunrise, day.goldenHourEnd,
+          DaylightService.periodColors[DaylightPeriod.goldenHour]!);
       // Daytime (morning to noon)
-      addSegment(day.goldenHourEnd, day.solarNoon, Colors.amber.shade200);
+      addSegment(day.goldenHourEnd, day.solarNoon,
+          DaylightService.periodColors[DaylightPeriod.daylight]!);
       // Daytime (noon to afternoon)
-      addSegment(day.solarNoon, day.goldenHour, Colors.amber.shade200);
+      addSegment(day.solarNoon, day.goldenHour,
+          DaylightService.periodColors[DaylightPeriod.daylight]!);
       // Golden hour (evening)
-      addSegment(day.goldenHour, day.sunset, Colors.orange.shade400);
+      addSegment(day.goldenHour, day.sunset,
+          DaylightService.eveningColors[DaylightPeriod.goldenHour]!);
       // Civil twilight (dusk)
-      addSegment(day.sunset, day.dusk, Colors.deepOrange.shade400);
+      addSegment(day.sunset, day.dusk,
+          DaylightService.eveningColors[DaylightPeriod.civilTwilight]!);
       // Nautical twilight (dusk)
-      addSegment(day.dusk, day.nauticalDusk, Colors.indigo.shade400);
+      addSegment(day.dusk, day.nauticalDusk,
+          DaylightService.periodColors[DaylightPeriod.nauticalTwilight]!);
       // Night after dusk
       if (day.nauticalDusk != null) {
         final nightEnd = day.nauticalDusk!.add(const Duration(hours: 6));
-        addSegment(day.nauticalDusk, nightEnd, Colors.indigo.shade900.withValues(alpha: 0.5));
+        addSegment(day.nauticalDusk, nightEnd,
+            DaylightService.periodColors[DaylightPeriod.night]!.withValues(alpha: 0.5));
       }
     }
 
@@ -1366,25 +1259,25 @@ class _SunMoonArcPainter extends CustomPainter {
       textPainter.paint(canvas, Offset(x - textPainter.width / 2, baseY + 2));
     }
 
-    // Show actual times instead of relative offsets
-    final startTime = arcStart.toLocal();
-    final endTime = arcStart.add(const Duration(hours: 24)).toLocal();
-    drawLabel(0.0, _formatTime(startTime, includeMinutes: false), neutralColor);
-    drawLabel(1.0, _formatTime(endTime, includeMinutes: false), neutralColor);
+    // Show actual times in location's timezone (not device local time)
+    final startTime = times.toLocationTime(arcStart);
+    final endTime = times.toLocationTime(arcStart.add(const Duration(hours: 24)));
+    drawLabel(0.0, DateTimeFormatter.formatTime(startTime, use24Hour: use24HourFormat, includeMinutes: false), neutralColor);
+    drawLabel(1.0, DateTimeFormatter.formatTime(endTime, use24Hour: use24HourFormat, includeMinutes: false), neutralColor);
 
     if (times.sunrise != null) {
       final progress = times.sunrise!.difference(arcStart).inMinutes / 1440.0;
       if (progress >= 0 && progress <= 1) {
-        final local = times.sunrise!.toLocal();
-        drawLabel(progress, _formatTime(local), Colors.amber);
+        final local = times.toLocationTime(times.sunrise!);
+        drawLabel(progress, DateTimeFormatter.formatTime(local, use24Hour: use24HourFormat), Colors.amber);
       }
     }
 
     if (times.sunset != null) {
       final progress = times.sunset!.difference(arcStart).inMinutes / 1440.0;
       if (progress >= 0 && progress <= 1) {
-        final local = times.sunset!.toLocal();
-        drawLabel(progress, _formatTime(local), Colors.deepOrange);
+        final local = times.toLocationTime(times.sunset!);
+        drawLabel(progress, DateTimeFormatter.formatTime(local, use24Hour: use24HourFormat), Colors.deepOrange);
       }
     }
   }
@@ -1404,16 +1297,3 @@ class _ArcSegment {
   _ArcSegment(this.start, this.end, this.color);
 }
 
-enum _HourlyItemType { forecast, sunrise, sunset }
-
-class _HourlyItem {
-  final DateTime time;
-  final _HourlyItemType type;
-  final HourlyForecast? forecast;
-
-  _HourlyItem({
-    required this.time,
-    required this.type,
-    this.forecast,
-  });
-}

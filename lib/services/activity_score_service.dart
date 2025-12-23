@@ -133,40 +133,37 @@ class ActivityScoreService extends ChangeNotifier {
     double totalWeight = 0;
     double weightedSum = 0;
 
-    // Score temperature (convert from Celsius to Kelvin for tolerance comparison)
+    // Score temperature (already in Kelvin from weatherflow_core)
     if (weather.temperature != null) {
-      final tempKelvin = weather.temperature! + 273.15; // C to K
-      parameterValues['temperature'] = tempKelvin;
-      final tempScore = _scorer.scoreParameter(tempKelvin, tolerance.temperature);
+      parameterValues['temperature'] = weather.temperature;
+      final tempScore = _scorer.scoreParameter(weather.temperature!, tolerance.temperature);
       parameterScores['temperature'] = tempScore;
       weightedSum += tempScore * tolerance.temperature.weight;
       totalWeight += tolerance.temperature.weight;
     }
 
-    // Score wind speed (already in m/s)
+    // Score wind speed (already in m/s from weatherflow_core)
     if (weather.windSpeed != null) {
       parameterValues['windSpeed'] = weather.windSpeed;
-      final windScore = _scorer.scoreParameter(weather.windSpeed, tolerance.windSpeed);
+      final windScore = _scorer.scoreParameter(weather.windSpeed!, tolerance.windSpeed);
       parameterScores['windSpeed'] = windScore;
       weightedSum += windScore * tolerance.windSpeed.weight;
       totalWeight += tolerance.windSpeed.weight;
     }
 
-    // Score precipitation probability (convert from 0-100 to 0-1)
+    // Score precipitation probability (already 0-1 ratio from weatherflow_core)
     if (weather.precipProbability != null) {
-      final precipRatio = weather.precipProbability! / 100.0;
-      parameterValues['precipProbability'] = precipRatio;
-      final precipScore = _scorer.scoreParameter(precipRatio, tolerance.precipProbability);
+      parameterValues['precipProbability'] = weather.precipProbability;
+      final precipScore = _scorer.scoreParameter(weather.precipProbability!, tolerance.precipProbability);
       parameterScores['precipProbability'] = precipScore;
       weightedSum += precipScore * tolerance.precipProbability.weight;
       totalWeight += tolerance.precipProbability.weight;
     }
 
-    // Score humidity as proxy for cloud cover if available
+    // Score humidity as proxy for cloud cover (already 0-1 ratio from weatherflow_core)
     if (weather.humidity != null) {
-      final humidityRatio = weather.humidity! / 100.0;
-      parameterValues['cloudCover'] = humidityRatio;
-      final cloudScore = _scorer.scoreParameter(humidityRatio, tolerance.cloudCover);
+      parameterValues['cloudCover'] = weather.humidity;
+      final cloudScore = _scorer.scoreParameter(weather.humidity!, tolerance.cloudCover);
       parameterScores['cloudCover'] = cloudScore;
       weightedSum += cloudScore * tolerance.cloudCover.weight;
       totalWeight += tolerance.cloudCover.weight;
