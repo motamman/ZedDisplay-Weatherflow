@@ -121,6 +121,10 @@ class _ConditionsDashboardToolState extends State<ConditionsDashboardTool> {
   // Local card order for reordering
   List<String> _cardOrder = [];
 
+  // Cached observation - only updated when valid data arrives
+  Observation? _cachedObservation;
+  bool _wasLoading = false;
+
   // Default order of all card keys
   static const List<String> _defaultOrder = [
     'showTemperature',
@@ -143,6 +147,11 @@ class _ConditionsDashboardToolState extends State<ConditionsDashboardTool> {
     super.initState();
     widget.weatherFlowService.addListener(_onDataChanged);
     _initCardOrder();
+    // Initialize with current data if available
+    final currentObs = widget.weatherFlowService.currentObservation;
+    if (currentObs != null) {
+      _cachedObservation = currentObs;
+    }
   }
 
   void _initCardOrder() {
@@ -168,7 +177,27 @@ class _ConditionsDashboardToolState extends State<ConditionsDashboardTool> {
   }
 
   void _onDataChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+
+    final isLoading = widget.weatherFlowService.isLoading;
+    final newObservation = widget.weatherFlowService.currentObservation;
+
+    // Only update cached data when loading completes (transition from loading to not loading)
+    // AND there's valid new data
+    if (_wasLoading && !isLoading && newObservation != null) {
+      _cachedObservation = newObservation;
+    }
+    // Also update if we get new data while not in a loading cycle (e.g., UDP updates)
+    else if (!isLoading && !_wasLoading && newObservation != null) {
+      // Check if observation is actually newer
+      if (_cachedObservation == null ||
+          newObservation.timestamp.isAfter(_cachedObservation!.timestamp)) {
+        _cachedObservation = newObservation;
+      }
+    }
+
+    _wasLoading = isLoading;
+    setState(() {});
   }
 
   @override
@@ -224,6 +253,14 @@ class _ConditionsDashboardToolState extends State<ConditionsDashboardTool> {
     );
   }
 
+  /// Check if data is stale (older than 5 minutes or currently loading)
+  bool get _isDataStale {
+    if (widget.weatherFlowService.isLoading) return true;
+    if (_cachedObservation == null) return false;
+    final age = DateTime.now().difference(_cachedObservation!.timestamp);
+    return age.inMinutes > 5;
+  }
+
   @override
   Widget build(BuildContext context) {
     final props = widget.config.style.customProperties ?? {};
@@ -235,15 +272,17 @@ class _ConditionsDashboardToolState extends State<ConditionsDashboardTool> {
     final compact = cardSize == 'compact';
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Get current observation
-    final observation = widget.weatherFlowService.currentObservation;
+    // Use cached observation - only updates when valid data arrives
+    final observation = _cachedObservation;
     final conversions = widget.weatherFlowService.conversions;
+    final isLoading = widget.weatherFlowService.isLoading;
+    final isStale = _isDataStale;
 
     // Build list of cards based on config
     final cards = _buildCardList(props, observation);
 
-    // Loading state
-    if (widget.weatherFlowService.isLoading && observation == null) {
+    // Only show loading spinner on first load when we have no cached data
+    if (isLoading && observation == null && _cachedObservation == null) {
       return const Center(
         child: CircularProgressIndicator(),
       );
@@ -273,12 +312,56 @@ class _ConditionsDashboardToolState extends State<ConditionsDashboardTool> {
                   ),
                 ),
                 const Spacer(),
+                // Stale/loading indicator
+                if (isStale) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isLoading
+                          ? Colors.blue.withValues(alpha: 0.2)
+                          : Colors.orange.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isLoading)
+                          SizedBox(
+                            width: 10,
+                            height: 10,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.5,
+                              color: Colors.blue,
+                            ),
+                          )
+                        else
+                          Icon(
+                            Icons.access_time,
+                            size: 12,
+                            color: Colors.orange,
+                          ),
+                        const SizedBox(width: 4),
+                        Text(
+                          isLoading ? 'Updating' : 'Stale',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isLoading ? Colors.blue : Colors.orange,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 if (observation != null)
                   Text(
                     _formatTime(observation.timestamp),
                     style: TextStyle(
                       fontSize: 11,
-                      color: isDark ? Colors.white54 : Colors.black45,
+                      color: isStale
+                          ? (isDark ? Colors.orange.shade300 : Colors.orange.shade700)
+                          : (isDark ? Colors.white54 : Colors.black45),
                     ),
                   ),
               ],
