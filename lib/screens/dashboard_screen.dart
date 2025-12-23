@@ -14,7 +14,6 @@ import '../services/weatherflow_service.dart';
 import '../services/dashboard_service.dart';
 import '../services/tool_service.dart';
 import '../services/tool_registry.dart';
-import 'station_list_screen.dart';
 import 'settings_screen.dart';
 import 'tool_selector_screen.dart';
 import 'tool_config_screen.dart';
@@ -32,6 +31,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isFullScreen = false;
   bool _showAppBar = true;
   Timer? _appBarHideTimer;
+
+  // Toolbar action visibility (10-second auto-hide)
+  bool _showToolbarActions = false;
+  Timer? _toolbarActionsTimer;
 
   // For swipe gesture handling
   double _dragStartX = 0;
@@ -78,7 +81,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _appBarHideTimer?.cancel();
+    _toolbarActionsTimer?.cancel();
     super.dispose();
+  }
+
+  /// Show toolbar actions for 10 seconds then auto-hide
+  void _showToolbarActionsTemporarily() {
+    setState(() => _showToolbarActions = true);
+    _toolbarActionsTimer?.cancel();
+    _toolbarActionsTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted) setState(() => _showToolbarActions = false);
+    });
   }
 
   /// Handle swipe to change screens with wrap-around
@@ -475,6 +488,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  /// Show station picker bottom sheet
+  void _showStationPicker(BuildContext context, WeatherFlowService weatherService) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => _StationPickerSheet(
+        weatherService: weatherService,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final weatherFlow = context.watch<WeatherFlowService>();
@@ -494,8 +522,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
           : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.endTop,
       appBar: (!_isFullScreen || _showAppBar || _toolBeingPlaced != null) ? AppBar(
-        title: Text(station?.name ?? 'WeatherFlow'),
-        actions: [
+        title: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _showToolbarActionsTemporarily,
+          onLongPress: () => _showStationPicker(context, weatherFlow),
+          child: Container(
+            alignment: Alignment.centerLeft,
+            height: kToolbarHeight,
+            child: Text(
+              station?.name ?? 'WeatherFlow',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+        actions: (_showToolbarActions || _isEditMode) ? [
           // Add tool button
           IconButton(
             icon: const Icon(Icons.add),
@@ -526,14 +566,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             onPressed: _toggleFullScreen,
             tooltip: _isFullScreen ? 'Exit Full Screen' : 'Enter Full Screen',
           ),
-          // Station switcher
-          IconButton(
-            icon: const Icon(Icons.swap_horiz),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const StationListScreen()),
-            ),
-            tooltip: 'Change Station',
-          ),
           // Settings
           IconButton(
             icon: const Icon(Icons.settings),
@@ -542,7 +574,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             tooltip: 'Settings',
           ),
-        ],
+        ] : null,
       ) : null,
       body: SafeArea(
         top: !_isFullScreen,
@@ -1073,6 +1105,115 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         return contentWidget;
       },
+    );
+  }
+}
+
+/// Station picker bottom sheet
+class _StationPickerSheet extends StatelessWidget {
+  final WeatherFlowService weatherService;
+
+  const _StationPickerSheet({required this.weatherService});
+
+  @override
+  Widget build(BuildContext context) {
+    final stations = weatherService.stations;
+    final selectedStation = weatherService.selectedStation;
+    final theme = Theme.of(context);
+
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Select Station',
+                  style: theme.textTheme.titleLarge,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+
+          // Station list
+          if (stations.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.cloud_off,
+                    size: 48,
+                    color: theme.colorScheme.outline,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No stations available',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Add your API token in Settings',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: stations.length,
+                itemBuilder: (context, index) {
+                  final station = stations[index];
+                  final isSelected = selectedStation?.stationId == station.stationId;
+
+                  return ListTile(
+                    leading: Icon(
+                      Icons.cloud,
+                      color: isSelected ? theme.colorScheme.primary : null,
+                    ),
+                    title: Text(
+                      station.name,
+                      style: TextStyle(
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        color: isSelected ? theme.colorScheme.primary : null,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'ID: ${station.stationId} • ${station.latitude.toStringAsFixed(2)}°, ${station.longitude.toStringAsFixed(2)}°',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.outline,
+                      ),
+                    ),
+                    trailing: isSelected
+                        ? Icon(Icons.check, color: theme.colorScheme.primary)
+                        : null,
+                    onTap: () async {
+                      Navigator.pop(context);
+                      if (!isSelected) {
+                        await weatherService.selectStation(station);
+                      }
+                    },
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
