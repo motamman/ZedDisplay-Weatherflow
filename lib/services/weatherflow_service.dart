@@ -613,6 +613,9 @@ class WeatherFlowService extends ChangeNotifier {
       // Cache for offline use
       await _storage.cacheForecast(stationId, forecast);
 
+      // Update derived data (sun/moon times, display forecasts)
+      _updateDerivedData();
+
       notifyListeners();
     } catch (e) {
       debugPrint('WeatherFlowService: Failed to fetch forecast: $e');
