@@ -440,6 +440,13 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
     final showTitle = _customProperties['showTitle'] as bool? ?? true;
     final showAnimation = _customProperties['showAnimation'] as bool? ?? true;
     final forecastDays = _customProperties['forecastDays'] as int? ?? 3;
+    final showDateRing = _customProperties['showDateRing'] as bool? ?? true;
+    final dateRingMode = _customProperties['dateRingMode'] as String? ?? 'range';
+    final showPrimaryIcons = _customProperties['showPrimaryIcons'] as bool? ?? true;
+    final showSecondaryIcons = _customProperties['showSecondaryIcons'] as bool? ?? true;
+    final showWindCenter = _customProperties['showWindCenter'] as bool? ?? true;
+    final showSeaCenter = _customProperties['showSeaCenter'] as bool? ?? true;
+    final showSolarCenter = _customProperties['showSolarCenter'] as bool? ?? true;
 
     return Card(
       child: Padding(
@@ -454,7 +461,7 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
             const SizedBox(height: 8),
             SwitchListTile(
               title: const Text('Show Title'),
-              subtitle: Text('Display "${_name}" in the spinner'),
+              subtitle: Text('Display "$_name" in the spinner'),
               secondary: const Icon(Icons.title_outlined),
               value: showTitle,
               onChanged: (value) {
@@ -486,11 +493,91 @@ class _ToolConfigScreenState extends State<ToolConfigScreen> {
             const SizedBox(height: 8),
             SwitchListTile(
               title: const Text('Show Weather Animation'),
+              subtitle: const Text('Rain, snow, wind effects'),
               value: showAnimation,
               onChanged: (value) {
                 setState(() {
                   _customProperties['showAnimation'] = value;
                 });
+              },
+            ),
+            const Divider(height: 24),
+            Text(
+              'Display Options',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              title: const Text('Show Date Ring'),
+              subtitle: const Text('Outer ring showing days'),
+              value: showDateRing,
+              onChanged: (value) {
+                setState(() => _customProperties['showDateRing'] = value);
+              },
+            ),
+            if (showDateRing) ...[
+              Padding(
+                padding: const EdgeInsets.only(left: 16),
+                child: DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(
+                    labelText: 'Date Ring Mode',
+                    border: OutlineInputBorder(),
+                  ),
+                  value: dateRingMode,
+                  items: const [
+                    DropdownMenuItem(value: 'range', child: Text('Forecast Range')),
+                    DropdownMenuItem(value: 'year', child: Text('Full Year')),
+                  ],
+                  onChanged: (value) {
+                    setState(() => _customProperties['dateRingMode'] = value);
+                  },
+                ),
+              ),
+            ],
+            SwitchListTile(
+              title: const Text('Show Primary Icons'),
+              subtitle: const Text('Sunrise, sunset, moonrise, moonset'),
+              value: showPrimaryIcons,
+              onChanged: (value) {
+                setState(() => _customProperties['showPrimaryIcons'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Show Secondary Icons'),
+              subtitle: const Text('Dawn, dusk, golden hours'),
+              value: showSecondaryIcons,
+              onChanged: (value) {
+                setState(() => _customProperties['showSecondaryIcons'] = value);
+              },
+            ),
+            const Divider(height: 24),
+            Text(
+              'Center Display Modes',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              title: const Text('Wind Center'),
+              subtitle: const Text('Show wind compass display'),
+              value: showWindCenter,
+              onChanged: (value) {
+                setState(() => _customProperties['showWindCenter'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Sea State Center'),
+              subtitle: const Text('Show wave height/period (N/A for WeatherFlow)'),
+              value: showSeaCenter,
+              onChanged: (value) {
+                setState(() => _customProperties['showSeaCenter'] = value);
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Solar Center'),
+              subtitle: const Text('Show solar radiation display'),
+              value: showSolarCenter,
+              onChanged: (value) {
+                setState(() => _customProperties['showSolarCenter'] = value);
               },
             ),
             const Divider(height: 24),

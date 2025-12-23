@@ -18,6 +18,8 @@ class DaySunTimes {
   final DateTime? nightEnd;
   final DateTime? moonrise;
   final DateTime? moonset;
+  final double? moonPhase;    // 0-1 (0=new, 0.5=full) for this day
+  final double? moonFraction; // 0-1 illumination fraction for this day
 
   const DaySunTimes({
     this.sunrise,
@@ -33,6 +35,8 @@ class DaySunTimes {
     this.nightEnd,
     this.moonrise,
     this.moonset,
+    this.moonPhase,
+    this.moonFraction,
   });
 }
 
@@ -51,13 +55,37 @@ class SunMoonTimes {
   final double? moonFraction; // 0-1 illumination fraction
   final double? moonAngle; // radians
 
+  /// Latitude for hemisphere-aware moon display
+  /// Negative = Southern Hemisphere (moon appears flipped)
+  final double? latitude;
+
+  /// UTC offset in seconds for the location's timezone
+  /// Used to display times in the location's local time, not device time
+  final int? utcOffsetSeconds;
+
   const SunMoonTimes({
     this.days = const [],
     this.todayIndex = 0,
     this.moonPhase,
     this.moonFraction,
     this.moonAngle,
+    this.latitude,
+    this.utcOffsetSeconds,
   });
+
+  /// Whether location is in Southern Hemisphere
+  bool get isSouthernHemisphere => (latitude ?? 0) < 0;
+
+  /// Convert a DateTime to the location's timezone
+  /// If utcOffsetSeconds is not set, falls back to device local time
+  DateTime toLocationTime(DateTime utcTime) {
+    if (utcOffsetSeconds == null) {
+      return utcTime.toLocal();
+    }
+    // Convert to UTC first, then add the location's offset
+    final utc = utcTime.toUtc();
+    return utc.add(Duration(seconds: utcOffsetSeconds!));
+  }
 
   /// Get sun times for a specific day relative to today
   /// 0 = today, 1 = tomorrow, -1 = yesterday, etc.
@@ -87,6 +115,7 @@ class SunMoonTimes {
 /// Hourly forecast entry
 class HourlyForecast {
   final int hour;
+  final DateTime? time; // Actual time from API
   final double? temperature;
   final double? feelsLike;
   final String? conditions;
@@ -97,9 +126,19 @@ class HourlyForecast {
   final double? pressure;
   final double? windSpeed;
   final double? windDirection; // degrees
+  final int? beaufort; // Beaufort scale 0-12
+  final bool? isDay; // Whether it's daytime
+
+  // Solar radiation fields (W/m²)
+  final double? shortwaveRadiation;       // Total global horizontal irradiance
+  final double? directRadiation;          // Direct radiation on horizontal surface
+  final double? diffuseRadiation;         // Scattered/indirect radiation
+  final double? directNormalIrradiance;   // Direct Normal Irradiance
+  final double? globalTiltedIrradiance;   // Irradiance on tilted surface
 
   HourlyForecast({
     required this.hour,
+    this.time,
     this.temperature,
     this.feelsLike,
     this.conditions,
@@ -110,6 +149,13 @@ class HourlyForecast {
     this.pressure,
     this.windSpeed,
     this.windDirection,
+    this.beaufort,
+    this.isDay,
+    this.shortwaveRadiation,
+    this.directRadiation,
+    this.diffuseRadiation,
+    this.directNormalIrradiance,
+    this.globalTiltedIrradiance,
   });
 
   /// WMO weather code to BAS weather icon mapping
@@ -175,18 +221,51 @@ class HourlyForecast {
     'overcast-night': 'overcast-night',
     'drizzle': 'drizzle',
     'hail': 'hail',
+    // OpenMeteo WMO icon names from weather_code.dart
+    'mostly-clear-day': 'clear-day',
+    'mostly-clear-night': 'clear-night',
+    'freezing-drizzle': 'sleet',
+    'rain-light': 'partly-cloudy-day-rain',
+    'rain-heavy': 'rain',
+    'freezing-rain': 'sleet',
+    'snow-light': 'partly-cloudy-day-snow',
+    'snow-heavy': 'snow',
+    'snow-grains': 'snow',
+    'showers-day': 'partly-cloudy-day-rain',
+    'showers-night': 'partly-cloudy-night-rain',
+    'showers': 'rain',
+    'snow-showers': 'snow',
+    'thunderstorm-hail': 'thunderstorms-rain',
   };
 
   /// Get asset path for weather icon
   String get weatherIconAsset {
     if (icon == null) return 'assets/weather_icons/bas_weather/production/fill/all/cloudy.svg';
 
-    // Check if it's a WMO code
+    // Check if it's a WMO code (numeric string like "0", "45", "95")
     if (wmoIconMap.containsKey(icon)) {
       final isDay = _isCurrentlyDay();
       final dayNight = isDay ? 'day' : 'night';
       final iconName = wmoIconMap[icon]![dayNight]!;
       return 'assets/weather_icons/bas_weather/production/fill/all/$iconName.svg';
+    }
+
+    // Check if it's OpenMeteo WMO format (e.g., "wmo_0_day.svg", "wmo_45_night.svg")
+    final wmoMatch = RegExp(r'wmo_(\d+)_(day|night)\.svg').firstMatch(icon!);
+    if (wmoMatch != null) {
+      final wmoCode = wmoMatch.group(1)!;
+      final dayNight = wmoMatch.group(2)!;
+      if (wmoIconMap.containsKey(wmoCode)) {
+        final iconName = wmoIconMap[wmoCode]![dayNight]!;
+        return 'assets/weather_icons/bas_weather/production/fill/all/$iconName.svg';
+      }
+    }
+
+    // Check if it's a Meteoblue icon (e.g., "07_night.svg")
+    if (icon!.contains('_') && icon!.endsWith('.svg') && !icon!.startsWith('wmo_')) {
+      // Convert to monochrome hollow version
+      final baseName = icon!.replaceAll('.svg', '');
+      return 'assets/weather_icons/meteoblue_specific/monochrome_hollow_hourly/${baseName}_monochrome_hollow.svg';
     }
 
     // Check if it's already a BAS weather icon name
@@ -195,11 +274,22 @@ class HourlyForecast {
       return 'assets/weather_icons/bas_weather/production/fill/all/$mappedIcon.svg';
     }
 
+    // Fallback
     return 'assets/weather_icons/bas_weather/production/fill/all/cloudy.svg';
   }
 
-  /// Determine if it's currently daytime based on the hour field
+  /// Determine if it's currently daytime based on API's isDay field (or fallback to hour)
   bool _isCurrentlyDay() {
+    // Use API's isDay field if available (considers actual sunrise/sunset)
+    if (isDay != null) {
+      return isDay!;
+    }
+    // Fallback: Use actual time from API if available
+    if (time != null) {
+      final forecastHour = time!.hour;
+      return forecastHour >= 6 && forecastHour < 18;
+    }
+    // Fallback to calculating from hour index
     final now = DateTime.now();
     final forecastTime = now.add(Duration(hours: hour));
     final forecastHour = forecastTime.hour;
@@ -208,23 +298,41 @@ class HourlyForecast {
 
   /// Fallback Flutter icon
   IconData get fallbackIcon {
-    final code = icon?.toLowerCase() ?? '';
-    if (code.contains('clear')) return Icons.wb_sunny;
-    if (code.contains('partly-cloudy')) return Icons.cloud_queue;
-    if (code.contains('cloudy')) return Icons.cloud;
-    if (code.contains('rainy') || code.contains('rain')) return Icons.water_drop;
-    if (code.contains('thunder')) return Icons.thunderstorm;
-    if (code.contains('snow')) return Icons.ac_unit;
-    if (code.contains('sleet')) return Icons.grain;
-    if (code.contains('foggy')) return Icons.foggy;
-    if (code.contains('windy')) return Icons.air;
-    return Icons.help_outline;
+    final code = icon ?? '';
+    // Check WMO codes first
+    if (wmoIconMap.containsKey(code)) {
+      final iconName = wmoIconMap[code]!['day']!;
+      if (iconName.contains('clear')) return Icons.wb_sunny;
+      if (iconName.contains('partly-cloudy')) return Icons.cloud_queue;
+      if (iconName.contains('cloudy') || iconName.contains('overcast')) return Icons.cloud;
+      if (iconName.contains('rain')) return Icons.water_drop;
+      if (iconName.contains('thunder')) return Icons.thunderstorm;
+      if (iconName.contains('snow')) return Icons.ac_unit;
+      if (iconName.contains('sleet')) return Icons.grain;
+      if (iconName.contains('fog')) return Icons.foggy;
+      if (iconName.contains('drizzle')) return Icons.water_drop;
+      return Icons.cloud;
+    }
+    // Check text-based icon names
+    final lowerCode = code.toLowerCase();
+    if (lowerCode.contains('clear')) return Icons.wb_sunny;
+    if (lowerCode.contains('partly-cloudy')) return Icons.cloud_queue;
+    if (lowerCode.contains('cloudy')) return Icons.cloud;
+    if (lowerCode.contains('rainy') || lowerCode.contains('rain')) return Icons.water_drop;
+    if (lowerCode.contains('thunder')) return Icons.thunderstorm;
+    if (lowerCode.contains('snow')) return Icons.ac_unit;
+    if (lowerCode.contains('sleet')) return Icons.grain;
+    if (lowerCode.contains('foggy') || lowerCode.contains('fog')) return Icons.foggy;
+    if (lowerCode.contains('drizzle')) return Icons.water_drop;
+    if (lowerCode.contains('windy')) return Icons.air;
+    return Icons.cloud;
   }
 }
 
 /// Daily forecast entry
 class DailyForecast {
   final int dayIndex; // 0 = today, 1 = tomorrow, etc.
+  final DateTime? date; // Actual date from API
   final double? tempHigh;
   final double? tempLow;
   final String? conditions;
@@ -233,9 +341,11 @@ class DailyForecast {
   final String? precipIcon;
   final DateTime? sunrise;
   final DateTime? sunset;
+  final double? shortwaveRadiationSum; // MJ/m² daily total solar radiation
 
   DailyForecast({
     required this.dayIndex,
+    this.date,
     this.tempHigh,
     this.tempLow,
     this.conditions,
@@ -244,29 +354,79 @@ class DailyForecast {
     this.precipIcon,
     this.sunrise,
     this.sunset,
+    this.shortwaveRadiationSum,
   });
 
-  /// Get day name from index
+  /// Get day name from date or fallback to index calculation
   String get dayName {
+    // Use actual date if available
+    if (date != null) {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final forecastDate = DateTime(date!.year, date!.month, date!.day);
+
+      if (forecastDate == today) return 'Today';
+      if (forecastDate == today.add(const Duration(days: 1))) return 'Tomorrow';
+
+      const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      return days[date!.weekday - 1];
+    }
+    // Fallback to index-based calculation
     if (dayIndex == 0) return 'Today';
     if (dayIndex == 1) return 'Tomorrow';
-    final date = DateTime.now().add(Duration(days: dayIndex));
+    final calcDate = DateTime.now().add(Duration(days: dayIndex));
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    return days[date.weekday - 1];
+    return days[calcDate.weekday - 1];
   }
 
   IconData get fallbackIcon {
-    final code = icon?.toLowerCase() ?? '';
-    if (code.contains('clear')) return Icons.wb_sunny;
-    if (code.contains('partly-cloudy')) return Icons.cloud_queue;
-    if (code.contains('cloudy')) return Icons.cloud;
-    if (code.contains('rainy') || code.contains('rain')) return Icons.water_drop;
-    if (code.contains('thunder')) return Icons.thunderstorm;
-    if (code.contains('snow')) return Icons.ac_unit;
-    if (code.contains('sleet')) return Icons.grain;
-    if (code.contains('foggy')) return Icons.foggy;
-    if (code.contains('windy')) return Icons.air;
-    return Icons.help_outline;
+    final code = icon ?? '';
+    // Check WMO codes first (reuse HourlyForecast's mapping)
+    if (HourlyForecast.wmoIconMap.containsKey(code)) {
+      final iconName = HourlyForecast.wmoIconMap[code]!['day']!;
+      if (iconName.contains('clear')) return Icons.wb_sunny;
+      if (iconName.contains('partly-cloudy')) return Icons.cloud_queue;
+      if (iconName.contains('cloudy') || iconName.contains('overcast')) return Icons.cloud;
+      if (iconName.contains('rain')) return Icons.water_drop;
+      if (iconName.contains('thunder')) return Icons.thunderstorm;
+      if (iconName.contains('snow')) return Icons.ac_unit;
+      if (iconName.contains('sleet')) return Icons.grain;
+      if (iconName.contains('fog')) return Icons.foggy;
+      if (iconName.contains('drizzle')) return Icons.water_drop;
+      return Icons.cloud;
+    }
+    // Check text-based icon names
+    final lowerCode = code.toLowerCase();
+    if (lowerCode.contains('clear')) return Icons.wb_sunny;
+    if (lowerCode.contains('partly-cloudy')) return Icons.cloud_queue;
+    if (lowerCode.contains('cloudy')) return Icons.cloud;
+    if (lowerCode.contains('rainy') || lowerCode.contains('rain')) return Icons.water_drop;
+    if (lowerCode.contains('thunder')) return Icons.thunderstorm;
+    if (lowerCode.contains('snow')) return Icons.ac_unit;
+    if (lowerCode.contains('sleet')) return Icons.grain;
+    if (lowerCode.contains('foggy') || lowerCode.contains('fog')) return Icons.foggy;
+    if (lowerCode.contains('drizzle')) return Icons.water_drop;
+    if (lowerCode.contains('windy')) return Icons.air;
+    return Icons.cloud;
+  }
+
+  /// Get weather icon asset path
+  String get weatherIconAsset {
+    if (icon == null) return 'assets/weather_icons/bas_weather/production/fill/all/cloudy.svg';
+
+    // Check if it's a WMO code - use HourlyForecast's mapping
+    if (HourlyForecast.wmoIconMap.containsKey(icon)) {
+      final iconName = HourlyForecast.wmoIconMap[icon]!['day']!;
+      return 'assets/weather_icons/bas_weather/production/fill/all/$iconName.svg';
+    }
+
+    // Map common icon names to BAS weather icons
+    final mappedIcon = HourlyForecast.basIconMap[icon?.toLowerCase()];
+    if (mappedIcon != null) {
+      return 'assets/weather_icons/bas_weather/production/fill/all/$mappedIcon.svg';
+    }
+
+    return 'assets/weather_icons/bas_weather/production/fill/all/cloudy.svg';
   }
 }
 

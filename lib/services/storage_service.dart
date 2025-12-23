@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:weatherflow_core/weatherflow_core.dart';
+import '../models/activity_definition.dart';
+import '../models/activity_tolerances.dart';
 
 /// Keys for Hive storage boxes
 class StorageKeys {
@@ -109,6 +111,85 @@ class StorageService extends ChangeNotifier {
   Future<void> setThemeMode(String mode) async {
     await _settingsBox.put(StorageKeys.themeMode, mode);
     notifyListeners();
+  }
+
+  // ============ Spinner Compatibility Settings ============
+
+  /// Whether user is right-handed (affects spinner layout)
+  bool get isRightHanded {
+    final value = _settingsBox.get('is_right_handed');
+    return value != 'false'; // Default to true
+  }
+
+  /// Set handedness preference
+  Future<void> setRightHanded(bool rightHanded) async {
+    await _settingsBox.put('is_right_handed', rightHanded.toString());
+    notifyListeners();
+  }
+
+  /// Get list of enabled activity types (stub - returns empty list)
+  List<String> get enabledActivities {
+    final value = _settingsBox.get('enabled_activities');
+    if (value == null) return [];
+    try {
+      return (jsonDecode(value) as List).cast<String>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Set enabled activities
+  Future<void> setEnabledActivities(List<String> activities) async {
+    await _settingsBox.put('enabled_activities', jsonEncode(activities));
+    notifyListeners();
+  }
+
+  /// Get all activity tolerances (with defaults for any missing)
+  Map<ActivityType, ActivityTolerances> get activityTolerances {
+    final result = <ActivityType, ActivityTolerances>{};
+    for (final activity in ActivityType.values) {
+      result[activity] = getActivityTolerance(activity);
+    }
+    return result;
+  }
+
+  /// Get tolerance for a specific activity
+  ActivityTolerances getActivityTolerance(ActivityType activity) {
+    final key = 'activity_tolerance_${activity.key}';
+    final value = _settingsBox.get(key);
+    if (value == null) {
+      return DefaultTolerances.forActivity(activity);
+    }
+    try {
+      final json = jsonDecode(value) as Map<String, dynamic>;
+      return ActivityTolerances.fromJson(json);
+    } catch (_) {
+      return DefaultTolerances.forActivity(activity);
+    }
+  }
+
+  /// Save tolerance for an activity
+  Future<void> setActivityTolerance(ActivityTolerances tolerance) async {
+    final key = 'activity_tolerance_${tolerance.activity.key}';
+    await _settingsBox.put(key, jsonEncode(tolerance.toJson()));
+
+    // Update enabled activities list
+    final enabled = List<String>.from(enabledActivities);
+    if (tolerance.enabled && !enabled.contains(tolerance.activity.key)) {
+      enabled.add(tolerance.activity.key);
+      await setEnabledActivities(enabled);
+    } else if (!tolerance.enabled && enabled.contains(tolerance.activity.key)) {
+      enabled.remove(tolerance.activity.key);
+      await setEnabledActivities(enabled);
+    }
+
+    notifyListeners();
+  }
+
+  /// Toggle activity enabled state
+  Future<void> toggleActivity(ActivityType activity) async {
+    final tolerance = getActivityTolerance(activity);
+    await setActivityTolerance(tolerance.copyWith(enabled: !tolerance.enabled));
   }
 
   // ============ UDP Settings ============

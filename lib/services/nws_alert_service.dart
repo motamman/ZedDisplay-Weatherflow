@@ -4,7 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
 
@@ -191,10 +191,17 @@ class NWSAlertService extends ChangeNotifier {
   DateTime? get lastFetch => _lastFetch;
   AlertLocationSource get locationSource => _locationSource;
 
+  /// Safely notify listeners to prevent "setState during build" errors
+  void _safeNotifyListeners() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
+  }
+
   /// Set the location source preference
   void setLocationSource(AlertLocationSource source) {
     _locationSource = source;
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   /// Set the station location (from WeatherFlow)
@@ -221,7 +228,7 @@ class NWSAlertService extends ChangeNotifier {
 
     _isLoading = true;
     _error = null;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       final allAlerts = <NWSAlert>[];
@@ -299,11 +306,11 @@ class NWSAlertService extends ChangeNotifier {
       _isLoading = false;
 
       debugPrint('NWSAlertService: Fetched ${_alerts.length} alerts (${_newAlertIds.length} new)');
-      notifyListeners();
+      _safeNotifyListeners();
     } catch (e) {
       _error = 'Failed to fetch alerts: $e';
       _isLoading = false;
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
@@ -378,13 +385,13 @@ class NWSAlertService extends ChangeNotifier {
   /// Mark an alert as seen (removes from new alerts)
   void markAlertSeen(String alertId) {
     _newAlertIds.remove(alertId);
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   /// Mark all alerts as seen
   void markAllSeen() {
     _newAlertIds.clear();
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   /// Clear all alerts and state
@@ -394,7 +401,7 @@ class NWSAlertService extends ChangeNotifier {
     _newAlertIds.clear();
     _error = null;
     _lastFetch = null;
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   @override

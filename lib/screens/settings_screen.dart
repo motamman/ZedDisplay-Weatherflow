@@ -4,6 +4,7 @@ import 'package:weatherflow_core/weatherflow_core.dart';
 import '../services/storage_service.dart';
 import '../services/weatherflow_service.dart';
 import 'setup_wizard_screen.dart';
+import 'activity_list_screen.dart';
 
 /// Settings screen for app configuration
 class SettingsScreen extends StatelessWidget {
@@ -127,6 +128,23 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           _UdpSettingsSection(),
+          const Divider(),
+
+          // Activity Forecaster
+          _buildSectionHeader(context, 'Activity Forecaster'),
+          ListTile(
+            title: const Text('Configure Activities'),
+            subtitle: Text('${storage.enabledActivities.length}/5 activities enabled'),
+            leading: const Icon(Icons.directions_run),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const ActivityListScreen(),
+                ),
+              );
+            },
+          ),
           const Divider(),
 
           // Account

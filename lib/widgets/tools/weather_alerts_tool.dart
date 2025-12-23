@@ -95,7 +95,21 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
 
+    // Listen for station changes to refetch alerts
+    widget.weatherFlowService.addListener(_onStationChanged);
+
     // Defer service setup to didChangeDependencies where context is available
+  }
+
+  /// Handle station changes by refetching alerts for the new location
+  void _onStationChanged() {
+    if (mounted) {
+      final station = widget.weatherFlowService.selectedStation;
+      if (station != null && _alertService != null) {
+        _alertService!.setStationLocation(station.latitude, station.longitude);
+        _alertService!.fetchAlerts();
+      }
+    }
   }
 
   @override
@@ -148,6 +162,7 @@ class _WeatherAlertsToolState extends State<WeatherAlertsTool>
   @override
   void dispose() {
     _pulseController.dispose();
+    widget.weatherFlowService.removeListener(_onStationChanged);
     _alertService?.removeListener(_onAlertsChanged);
     // Don't dispose the service - it's shared via Provider
     super.dispose();

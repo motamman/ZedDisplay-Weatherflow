@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:weatherflow_core/weatherflow_core.dart';
+import 'package:weatherflow_core/weatherflow_core.dart' hide HourlyForecast;
 import 'storage_service.dart';
 import 'websocket_service.dart';
 import 'udp_service.dart';
+import '../widgets/forecast_models.dart';
+import '../models/marine_data.dart';
+import '../utils/sun_calc.dart' show SunCalc, MoonCalc;
 
 /// Connection type currently in use
 enum ConnectionType { none, rest, websocket, udp }
@@ -38,6 +41,11 @@ class WeatherFlowService extends ChangeNotifier {
 
   // Refresh timer
   Timer? _refreshTimer;
+
+  // State for spinner compatibility
+  bool _isRefreshing = false;
+  SunMoonTimes? _sunMoonTimes;
+  List<HourlyForecast> _displayHourlyForecasts = [];
 
   WeatherFlowService({
     required StorageService storage,
@@ -91,6 +99,39 @@ class WeatherFlowService extends ChangeNotifier {
 
   /// All device observations (keyed by serial number)
   Map<String, Observation> get deviceObservations => Map.unmodifiable(_deviceObservations);
+
+  // ============ Spinner Compatibility Getters ============
+
+  /// Whether a refresh is in progress
+  bool get isRefreshing => _isRefreshing;
+
+  /// Whether we have any data available
+  bool get hasData => _currentForecast != null || _currentObservation != null;
+
+  /// Calculated sun and moon times
+  SunMoonTimes? get sunMoonTimes => _sunMoonTimes;
+
+  /// Hourly forecasts formatted for display
+  List<HourlyForecast> get displayHourlyForecasts => _displayHourlyForecasts;
+
+  /// Marine data (stub - WeatherFlow doesn't provide marine data)
+  MarineData? get marineData => null;
+
+  /// Whether marine data is loading (stub)
+  bool get isLoadingMarine => false;
+
+  /// Location data from selected station
+  ({double latitude, double longitude, String? timezone})? get location {
+    if (_selectedStation == null) return null;
+    return (
+      latitude: _selectedStation!.latitude,
+      longitude: _selectedStation!.longitude,
+      timezone: _selectedStation!.timezone,
+    );
+  }
+
+  /// Active weather model ID (stub - not applicable for WeatherFlow)
+  String? get activeModelId => 'weatherflow';
 
   /// Get observation for a specific device by serial number
   Observation? getDeviceObservation(String serialNumber) => _deviceObservations[serialNumber];
@@ -598,6 +639,143 @@ class WeatherFlowService extends ChangeNotifier {
   Future<void> fetchForecast() async {
     if (_selectedStation == null) return;
     await _fetchForecast(_selectedStation!.stationId);
+  }
+
+  // ============ Spinner Compatibility Methods ============
+
+  /// Force refresh all data (for spinner compatibility)
+  Future<void> forceRefresh() async {
+    _isRefreshing = true;
+    notifyListeners();
+    try {
+      await refresh();
+      _updateDerivedData();
+    } finally {
+      _isRefreshing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Refresh forecast data (for spinner compatibility)
+  Future<void> refreshForecast() async {
+    _isRefreshing = true;
+    notifyListeners();
+    try {
+      await fetchForecast();
+      _updateDerivedData();
+    } finally {
+      _isRefreshing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Fetch marine data (stub - WeatherFlow doesn't provide marine data)
+  Future<void> fetchMarineData() async {
+    // Stub - no marine data from WeatherFlow API
+  }
+
+  /// Update derived data (sun/moon times, hourly forecasts)
+  void _updateDerivedData() {
+    _updateSunMoonTimes();
+    _updateDisplayForecasts();
+  }
+
+  /// Calculate sun and moon times from station location
+  void _updateSunMoonTimes() {
+    if (_selectedStation == null) return;
+
+    final lat = _selectedStation!.latitude;
+    final lng = _selectedStation!.longitude;
+    final now = DateTime.now();
+
+    // Calculate for today and next few days
+    final days = <DaySunTimes>[];
+    for (var i = -1; i < 10; i++) {
+      final date = now.add(Duration(days: i));
+      final times = SunCalc.getTimes(date, lat, lng);
+      final moonTimes = MoonCalc.getTimes(date, lat, lng);
+      final moonIllum = MoonCalc.getIllumination(date);
+
+      days.add(DaySunTimes(
+        sunrise: times.sunrise,
+        sunset: times.sunset,
+        solarNoon: times.solarNoon,
+        dawn: times.dawn,
+        dusk: times.dusk,
+        nauticalDawn: times.nauticalDawn,
+        nauticalDusk: times.nauticalDusk,
+        goldenHour: times.goldenHour,
+        goldenHourEnd: times.goldenHourEnd,
+        night: times.night,
+        nightEnd: times.nightEnd,
+        moonrise: moonTimes.rise,
+        moonset: moonTimes.set,
+        moonPhase: moonIllum.phase,
+        moonFraction: moonIllum.fraction,
+      ));
+    }
+
+    // Get timezone offset
+    int utcOffsetSeconds = DateTime.now().timeZoneOffset.inSeconds;
+
+    _sunMoonTimes = SunMoonTimes(
+      days: days,
+      todayIndex: 1, // Index 0 is yesterday, 1 is today
+      moonPhase: days.isNotEmpty ? days[1].moonPhase : 0.0,
+      moonFraction: days.isNotEmpty ? days[1].moonFraction : 0.0,
+      latitude: lat,
+      utcOffsetSeconds: utcOffsetSeconds,
+    );
+  }
+
+  /// Convert API forecasts to display format
+  void _updateDisplayForecasts() {
+    if (_currentForecast == null) {
+      _displayHourlyForecasts = [];
+      return;
+    }
+
+    int hourIndex = 0;
+    _displayHourlyForecasts = _currentForecast!.hourlyForecasts.map((h) {
+      // Calculate Beaufort scale from wind speed (m/s)
+      int? beaufort;
+      if (h.windAvg != null) {
+        final windMps = h.windAvg!;
+        if (windMps < 0.5) beaufort = 0;
+        else if (windMps < 1.6) beaufort = 1;
+        else if (windMps < 3.4) beaufort = 2;
+        else if (windMps < 5.5) beaufort = 3;
+        else if (windMps < 8.0) beaufort = 4;
+        else if (windMps < 10.8) beaufort = 5;
+        else if (windMps < 13.9) beaufort = 6;
+        else if (windMps < 17.2) beaufort = 7;
+        else if (windMps < 20.8) beaufort = 8;
+        else if (windMps < 24.5) beaufort = 9;
+        else if (windMps < 28.5) beaufort = 10;
+        else if (windMps < 32.7) beaufort = 11;
+        else beaufort = 12;
+      }
+
+      // Determine if daytime based on hour (simple approximation)
+      final hour = h.time.hour;
+      final isDay = hour >= 6 && hour < 20;
+
+      return HourlyForecast(
+        hour: hourIndex++,
+        time: h.time,
+        temperature: h.temperature,
+        feelsLike: h.temperature, // WeatherFlow API doesn't provide feels_like in hourly
+        humidity: h.humidity,
+        windSpeed: h.windAvg,
+        windDirection: h.windDirection,
+        precipProbability: h.precipProbability,
+        pressure: h.pressure,
+        icon: h.icon ?? (isDay ? 'clear-day' : 'clear-night'),
+        conditions: h.conditions,
+        beaufort: beaufort,
+        isDay: isDay,
+      );
+    }).toList();
   }
 
   // ============ Event Handlers ============

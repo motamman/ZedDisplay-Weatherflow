@@ -5,15 +5,23 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:weatherflow_core/weatherflow_core.dart' hide HourlyForecast;
 import '../../models/tool_config.dart';
 import '../../models/tool_definition.dart';
+import '../../models/marine_data.dart';
 import '../../services/tool_registry.dart';
-import '../../services/storage_service.dart';
 import '../../services/weatherflow_service.dart';
 import '../../services/nws_alert_service.dart';
-import '../../utils/sun_calc.dart';
+import '../../services/storage_service.dart';
+import '../../services/activity_scorer.dart';
+import '../../services/activity_score_service.dart';
+import '../../services/solar_calculation_service.dart';
+import '../../models/activity_definition.dart';
+import '../../utils/conversion_extensions.dart';
 import '../forecast_spinner.dart';
 import '../forecast_models.dart';
+import '../nws_alerts_dialog.dart';
+import '../activity_score_summary_sheet.dart';
 
 /// Builder for Weather API Spinner tool
 class WeatherApiSpinnerToolBuilder implements ToolBuilder {
@@ -56,6 +64,13 @@ class WeatherApiSpinnerToolBuilder implements ToolBuilder {
           'showTitle': true,
           'showAnimation': true,
           'forecastDays': 3, // 1-10 days of forecast (default 3 = 72 hours)
+          'showDateRing': true, // Toggle outer date rim
+          'dateRingMode': 'range', // 'year' = full year view, 'range' = forecast range only
+          'showPrimaryIcons': true, // Toggle sun/moon rise and set icons
+          'showSecondaryIcons': true, // Toggle dusk, dawn, golden hours icons
+          'showWindCenter': true, // Enable wind state center display
+          'showSeaCenter': true, // Enable sea state center display (requires marine data)
+          'showSolarCenter': true, // Enable solar center display
         },
       ),
     );
@@ -83,11 +98,6 @@ class WeatherApiSpinnerTool extends StatefulWidget {
 
 class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
     with SingleTickerProviderStateMixin {
-  List<HourlyForecast> _hourlyForecasts = [];
-  SunMoonTimes? _sunMoonTimes;
-  bool _isLoading = true;
-  String? _error;
-
   // Refresh state
   bool _isRefreshing = false;
   _RefreshStatus? _refreshStatus;
@@ -95,7 +105,10 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
   // Alert animation state
   late AnimationController _alertFlashController;
   NWSAlertService? _alertService;
-  Set<String> _acknowledgedAlertIds = {};
+  final Set<String> _acknowledgedAlertIds = {};
+
+  // Track spinner's selected time for alert filtering
+  int _selectedHourOffset = 0;
 
   @override
   void initState() {
@@ -104,7 +117,6 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
       vsync: this,
       duration: const Duration(milliseconds: 500),
     )..repeat(reverse: true);
-    _loadForecast();
   }
 
   @override
@@ -141,16 +153,7 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
     return Theme.of(context).colorScheme.primary;
   }
 
-  @override
-  void didUpdateWidget(WeatherApiSpinnerTool oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.weatherFlowService.selectedStation?.stationId !=
-        widget.weatherFlowService.selectedStation?.stationId) {
-      _loadForecast();
-    }
-  }
-
-  /// Force refresh forecast data from API
+  /// Force refresh forecast data from API (including marine data)
   Future<void> _forceRefresh() async {
     if (_isRefreshing) return;
 
@@ -160,15 +163,15 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
     });
 
     try {
-      // Force fetch from API (bypasses cache)
-      await widget.weatherFlowService.fetchForecast();
-      final forecast = widget.weatherFlowService.currentForecast;
+      // Use forceRefresh to refresh both weather and marine data
+      await widget.weatherFlowService.forceRefresh();
 
-      if (forecast != null) {
-        _parseForecasts(forecast);
+      if (mounted) {
         setState(() {
           _isRefreshing = false;
-          _refreshStatus = _RefreshStatus.success;
+          _refreshStatus = widget.weatherFlowService.hasData
+              ? _RefreshStatus.success
+              : _RefreshStatus.failure;
         });
 
         // Clear status after 2 seconds
@@ -177,139 +180,14 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
             setState(() => _refreshStatus = null);
           }
         });
-      } else {
-        setState(() {
-          _isRefreshing = false;
-          _refreshStatus = _RefreshStatus.failure;
-        });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isRefreshing = false;
           _refreshStatus = _RefreshStatus.failure;
-          _error = 'Refresh failed: $e';
         });
       }
-    }
-  }
-
-  Future<void> _loadForecast() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
-    try {
-      final forecast = widget.weatherFlowService.currentForecast;
-      if (forecast == null) {
-        // Try to fetch forecast
-        await widget.weatherFlowService.fetchForecast();
-      }
-
-      final fetchedForecast = widget.weatherFlowService.currentForecast;
-      if (fetchedForecast != null) {
-        _parseForecasts(fetchedForecast);
-      } else {
-        setState(() {
-          _error = 'No forecast data available';
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = 'Error loading forecast: $e';
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  void _parseForecasts(dynamic forecast) {
-    final hourlyForecasts = <HourlyForecast>[];
-    final List<DaySunTimes> sunTimeDays = [];
-
-    // Get forecastDays from config (default 3 days = 72 hours)
-    final forecastDays = widget.config.style.customProperties?['forecastDays'] as int? ?? 3;
-    final maxHours = forecastDays * 24;
-
-    // Get station coordinates for astronomical calculations
-    final station = widget.weatherFlowService.selectedStation;
-    final lat = station?.latitude ?? 0.0;
-    final lng = station?.longitude ?? 0.0;
-
-    try {
-      // Parse hourly forecasts from WeatherFlow ForecastResponse
-      // ForecastResponse has hourlyForecasts and dailyForecasts properties
-      final hourlyList = forecast.hourlyForecasts;
-      if (hourlyList != null && hourlyList.isNotEmpty) {
-        for (int i = 0; i < hourlyList.length && i < maxHours; i++) {
-          final hour = hourlyList[i];
-          // Convert from Kelvin to display units later
-          // Temperature is stored in Kelvin, humidity as 0-1 ratio
-          hourlyForecasts.add(HourlyForecast(
-            hour: i,
-            temperature: hour.temperature != null ? hour.temperature - 273.15 : null, // K to C
-            feelsLike: hour.feelsLike != null ? hour.feelsLike - 273.15 : null, // K to C
-            conditions: hour.conditions,
-            longDescription: hour.conditions,
-            icon: hour.icon,
-            precipProbability: hour.precipProbability != null ? hour.precipProbability * 100 : null, // 0-1 to %
-            humidity: hour.humidity != null ? hour.humidity * 100 : null, // 0-1 to %
-            pressure: hour.pressure != null ? hour.pressure / 100 : null, // Pa to hPa
-            windSpeed: hour.windAvg,
-            windDirection: hour.windDirection,
-          ));
-        }
-      }
-
-      // Calculate sun/moon times astronomically for each day
-      final now = DateTime.now();
-      for (int dayIndex = 0; dayIndex < forecastDays; dayIndex++) {
-        final date = now.add(Duration(days: dayIndex));
-
-        // Use SunCalc for accurate astronomical calculations
-        final sunTimes = SunCalc.getTimes(date, lat, lng);
-        final moonTimes = MoonCalc.getTimes(date, lat, lng);
-
-        sunTimeDays.add(DaySunTimes(
-          sunrise: sunTimes.sunrise,
-          sunset: sunTimes.sunset,
-          dawn: sunTimes.dawn,
-          dusk: sunTimes.dusk,
-          nauticalDawn: sunTimes.nauticalDawn,
-          nauticalDusk: sunTimes.nauticalDusk,
-          solarNoon: sunTimes.solarNoon,
-          goldenHour: sunTimes.goldenHour,
-          goldenHourEnd: sunTimes.goldenHourEnd,
-          night: sunTimes.night,
-          nightEnd: sunTimes.nightEnd,
-          moonrise: moonTimes.rise,
-          moonset: moonTimes.set,
-        ));
-      }
-
-      // Get current moon phase
-      final moonIllum = MoonCalc.getIllumination(now);
-
-      setState(() {
-        _hourlyForecasts = hourlyForecasts;
-        _sunMoonTimes = SunMoonTimes(
-          days: sunTimeDays,
-          moonPhase: moonIllum.phase,
-          moonFraction: moonIllum.fraction,
-          moonAngle: moonIllum.angle,
-        );
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Error parsing forecast: $e';
-        _isLoading = false;
-      });
     }
   }
 
@@ -318,19 +196,82 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
     final customProps = widget.config.style.customProperties ?? {};
     final showTitle = customProps['showTitle'] as bool? ?? true;
     final showAnimation = customProps['showAnimation'] as bool? ?? true;
+    final showDateRing = customProps['showDateRing'] as bool? ?? true;
+    final dateRingMode = customProps['dateRingMode'] as String? ?? 'range';
+    final showPrimaryIcons = customProps['showPrimaryIcons'] as bool? ?? true;
+    final showSecondaryIcons = customProps['showSecondaryIcons'] as bool? ?? true;
+    final showWindCenter = customProps['showWindCenter'] as bool? ?? true;
+    final showSeaCenter = customProps['showSeaCenter'] as bool? ?? true;
+    final showSolarCenter = customProps['showSolarCenter'] as bool? ?? true;
+    final forecastDays = customProps['forecastDays'] as int? ?? 3;
+    final maxHours = forecastDays * 24;
 
-    // Get global unit preferences from StorageService
-    final storage = context.watch<StorageService>();
-    final unitPrefs = storage.unitPreferences;
-    final tempUnit = unitPrefs.temperature; // '°C' or '°F'
-    final windUnit = unitPrefs.windSpeed; // 'kn', 'm/s', 'mph', 'km/h'
+    // Get system-wide solar config from SolarCalculationService
+    final solarService = context.watch<SolarCalculationService>();
+
+    // Use ListenableBuilder to rebuild when service data changes (especially marine data)
+    return ListenableBuilder(
+      listenable: widget.weatherFlowService,
+      builder: (context, _) => _buildSpinnerContent(
+        context,
+        showTitle: showTitle,
+        showAnimation: showAnimation,
+        showDateRing: showDateRing,
+        dateRingMode: dateRingMode,
+        showPrimaryIcons: showPrimaryIcons,
+        showSecondaryIcons: showSecondaryIcons,
+        showWindCenter: showWindCenter,
+        showSeaCenter: showSeaCenter,
+        showSolarCenter: showSolarCenter,
+        maxHours: maxHours,
+        solarService: solarService,
+      ),
+    );
+  }
+
+  Widget _buildSpinnerContent(
+    BuildContext context, {
+    required bool showTitle,
+    required bool showAnimation,
+    required bool showDateRing,
+    required String dateRingMode,
+    required bool showPrimaryIcons,
+    required bool showSecondaryIcons,
+    required bool showWindCenter,
+    required bool showSeaCenter,
+    required bool showSolarCenter,
+    required int maxHours,
+    required SolarCalculationService solarService,
+  }) {
+    // Get data from service
+    final service = widget.weatherFlowService;
+    final conversions = service.conversions;
+    final tempUnit = conversions.temperatureSymbol;
+    final windUnit = conversions.windSpeedSymbol;
+
+    // Trigger marine fetch if sea state center is enabled
+    // Fetch if: no data, or data is stale (> 30 min), and not currently loading
+    final marineStaleAge = const Duration(minutes: 30);
+    final marineNeedsRefresh = service.marineData == null ||
+        service.marineData!.isStale(marineStaleAge);
+    if (showSeaCenter && marineNeedsRefresh && !service.isLoadingMarine) {
+      // Fetch marine data asynchronously
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        service.fetchMarineData();
+      });
+    }
+
+    // Get pre-parsed display data from service, limit to configured hours
+    final hourlyForecasts = service.displayHourlyForecasts.take(maxHours).toList();
+    final sunMoonTimes = service.sunMoonTimes;
+    final marineData = service.marineData;
 
     // Use tool name if showTitle enabled, otherwise default provider name
     final displayName = showTitle && widget.name != null && widget.name!.isNotEmpty
         ? widget.name!
-        : 'WeatherFlow';
+        : 'OpenMeteo';
 
-    if (_isLoading) {
+    if (service.isLoading && hourlyForecasts.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -343,7 +284,7 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
       );
     }
 
-    if (_error != null) {
+    if (service.error != null && hourlyForecasts.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -351,13 +292,13 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
             Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
             const SizedBox(height: 8),
             Text(
-              _error!,
+              service.error!,
               style: TextStyle(color: Colors.red[300]),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: _loadForecast,
+              onPressed: _forceRefresh,
               icon: const Icon(Icons.refresh),
               label: const Text('Retry'),
             ),
@@ -366,7 +307,7 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
       );
     }
 
-    if (_hourlyForecasts.isEmpty) {
+    if (hourlyForecasts.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -379,7 +320,7 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: _loadForecast,
+              onPressed: _forceRefresh,
               icon: const Icon(Icons.refresh),
               label: const Text('Refresh'),
             ),
@@ -388,76 +329,104 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
       );
     }
 
-    // Convert temperatures for display (data is stored in Celsius)
-    double? convertTemp(double? celsius) {
-      if (celsius == null) return null;
-      if (tempUnit == '°F') return celsius * 9 / 5 + 32;
-      return celsius; // Already Celsius
-    }
-
-    // Convert wind speed for display (data is stored in m/s)
-    double? convertWind(double? metersPerSecond) {
-      if (metersPerSecond == null) return null;
-      switch (windUnit) {
-        case 'kn':
-          return metersPerSecond * 1.94384; // m/s to knots
-        case 'mph':
-          return metersPerSecond * 2.23694; // m/s to mph
-        case 'km/h':
-          return metersPerSecond * 3.6; // m/s to km/h
-        default:
-          return metersPerSecond; // m/s
-      }
-    }
-
-    // Convert hourly forecast values to display units
-    final convertedHourly = _hourlyForecasts.map((h) => HourlyForecast(
+    // Convert hourly forecast values from SI base units to user's preferred units
+    // SI base: Kelvin, Pascals, m/s, meters, ratio 0-1
+    final convertedHourly = hourlyForecasts.map((h) => HourlyForecast(
       hour: h.hour,
-      temperature: convertTemp(h.temperature),
-      feelsLike: convertTemp(h.feelsLike),
+      time: h.time,  // Pass through actual DateTime
+      temperature: h.temperature != null ? conversions.convertTemperatureFromKelvin(h.temperature!) : null,
+      feelsLike: h.feelsLike != null ? conversions.convertTemperatureFromKelvin(h.feelsLike!) : null,
       conditions: h.conditions,
       longDescription: h.longDescription,
       icon: h.icon,
-      precipProbability: h.precipProbability,
-      humidity: h.humidity,
-      pressure: h.pressure,
-      windSpeed: convertWind(h.windSpeed),
+      precipProbability: h.precipProbability != null ? conversions.convertProbabilityFromRatio(h.precipProbability!) : null,
+      humidity: h.humidity != null ? conversions.convertHumidityFromRatio(h.humidity!) : null,
+      pressure: h.pressure != null ? conversions.convertPressureFromPascals(h.pressure!) : null,
+      windSpeed: h.windSpeed != null ? conversions.convertWindSpeedFromMps(h.windSpeed!) : null,
       windDirection: h.windDirection,
+      beaufort: h.beaufort,  // Pass through pre-calculated Beaufort scale
+      isDay: h.isDay,
+      // Solar radiation fields (already in W/m², no conversion needed)
+      shortwaveRadiation: h.shortwaveRadiation,
+      directRadiation: h.directRadiation,
+      diffuseRadiation: h.diffuseRadiation,
+      directNormalIrradiance: h.directNormalIrradiance,
+      globalTiltedIrradiance: h.globalTiltedIrradiance,
     )).toList();
 
-    // Check for active alerts and filter to only those currently in effect
+    // Check for alerts active at the spinner's selected time (not current real time)
+    // Use ALL alerts, not activeAlerts which pre-filters by current time
     final alertService = _alertService;
-    final activeAlerts = alertService?.activeAlerts ?? [];
-    final now = DateTime.now();
-    final currentlyActiveAlerts = activeAlerts.where((alert) {
-      // Check if alert is currently in effect
-      final effective = alert.effective ?? now.subtract(const Duration(days: 1));
-      final expires = alert.expires ?? alert.ends ?? now.add(const Duration(days: 1));
-      return now.isAfter(effective) && now.isBefore(expires);
+    final allAlerts = alertService?.alerts ?? [];
+    // Use actual forecast time from API, not calculated time
+    final selectedForecast = _selectedHourOffset < convertedHourly.length
+        ? convertedHourly[_selectedHourOffset]
+        : null;
+    final selectedTime = selectedForecast?.time ?? DateTime.now().add(Duration(hours: _selectedHourOffset));
+    final currentlyActiveAlerts = allAlerts.where((alert) {
+      // Check if alert is in effect at the selected spinner time
+      // Convert to local time for comparison
+      final effective = alert.effective?.toLocal() ?? alert.onset?.toLocal() ?? selectedTime.subtract(const Duration(days: 1));
+      final expires = (alert.expires ?? alert.ends)?.toLocal() ?? selectedTime.add(const Duration(days: 1));
+      return !selectedTime.isBefore(effective) && selectedTime.isBefore(expires);
     }).toList();
     final hasCurrentAlerts = currentlyActiveAlerts.isNotEmpty;
     final currentHighestAlert = hasCurrentAlerts ? currentlyActiveAlerts.first : null;
     final hasUnacknowledgedCurrentAlerts = hasCurrentAlerts &&
         currentlyActiveAlerts.any((alert) => !_acknowledgedAlertIds.contains(alert.id));
 
+    final storage = context.watch<StorageService>();
+    final isRightHanded = storage.isRightHanded;
+
+    // Get weather model name for display (WeatherFlow is a single provider)
+    final modelDisplayName = 'WeatherFlow';
+
     return Stack(
       children: [
-        // Main spinner widget
+        // Main spinner widget with alert badge passed in
         ForecastSpinner(
           hourlyForecasts: convertedHourly,
-          sunMoonTimes: _sunMoonTimes,
+          sunMoonTimes: sunMoonTimes,
           tempUnit: tempUnit, // Already formatted: '°C' or '°F'
           windUnit: windUnit, // Already formatted: 'kn', 'm/s', 'mph', 'km/h'
-          pressureUnit: unitPrefs.pressure, // 'hPa', 'mbar', 'inHg', etc.
+          pressureUnit: conversions.pressureSymbol,
           primaryColor: _getPrimaryColor(context),
           providerName: showTitle ? displayName : null,
+          modelName: showTitle ? modelDisplayName : null,
           showWeatherAnimation: showAnimation,
+          isRightHanded: isRightHanded,
+          showDateRing: showDateRing,
+          dateRingMode: dateRingMode,
+          forecastHours: maxHours,
+          showPrimaryIcons: showPrimaryIcons,
+          showSecondaryIcons: showSecondaryIcons,
+          showWindCenter: showWindCenter,
+          showSeaCenter: showSeaCenter,
+          showSolarCenter: showSolarCenter,
+          panelMaxWatts: solarService.panelMaxWatts,
+          systemDerate: solarService.systemDerate,
+          marineData: marineData,
+          conversions: conversions,
+          alertBadgeBuilder: hasCurrentAlerts
+              ? (scale) => _buildAlertBadge(currentHighestAlert!, hasUnacknowledgedCurrentAlerts, scale, currentlyActiveAlerts)
+              : null,
+          onHourChanged: (hourOffset) {
+            if (_selectedHourOffset != hourOffset) {
+              setState(() {
+                _selectedHourOffset = hourOffset;
+              });
+              // Update the centralized activity score service
+              context.read<ActivityScoreService>().updateSelectedHour(hourOffset);
+            }
+          },
+          activityScores: context.watch<ActivityScoreService>().activityScores,
         ),
-        // Alert badge on top (muted styling, tappable)
-        if (hasCurrentAlerts)
-          _buildAlertBadge(
-            currentHighestAlert!,
-            hasUnacknowledgedCurrentAlerts,
+        // Activity score indicators - top right, to left of refresh button
+        if (!widget.isEditMode)
+          Positioned(
+            top: 8,
+            right: 48, // Leave room for refresh button
+            child: _buildActivityIndicators(),
           ),
         // Refresh button in top right corner (hidden in edit mode so dashboard controls are visible)
         if (!widget.isEditMode)
@@ -470,96 +439,60 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
     );
   }
 
-  /// Build a small alert badge positioned in the top-right of the inner circle
-  Widget _buildAlertBadge(NWSAlert alert, bool shouldFlash) {
+  /// Build a small alert badge (styled to match Now button)
+  /// Tap to acknowledge, long press to show all alerts
+  Widget _buildAlertBadge(NWSAlert alert, bool shouldFlash, double scale, List<NWSAlert> allAlerts) {
     final alertColor = _getAlertColor(alert.severity);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = constraints.maxWidth < constraints.maxHeight
-            ? constraints.maxWidth
-            : constraints.maxHeight;
-        final scale = (size / 300).clamp(0.5, 1.5);
-        final outerMargin = 27.0 * scale;
-        final outerRadius = size / 2 - outerMargin;
-        final innerRadius = outerRadius * 0.72;
+    Widget buildButton(Color fgColor, Color bgColor) {
+      return GestureDetector(
+        onLongPress: () {
+          // Show alerts dialog on long press
+          NWSAlertsDialog.showAsSheet(context, allAlerts);
+        },
+        child: TextButton.icon(
+          onPressed: () {
+            // Acknowledge on tap
+            setState(() {
+              for (final a in _alertService?.activeAlerts ?? []) {
+                _acknowledgedAlertIds.add(a.id);
+              }
+            });
+          },
+          icon: Icon(_getAlertIcon(alert.severity), size: 14 * scale),
+          label: Text('Alert', style: TextStyle(fontSize: 11 * scale)),
+          style: TextButton.styleFrom(
+            foregroundColor: fgColor,
+            backgroundColor: bgColor,
+            padding: EdgeInsets.symmetric(horizontal: 12 * scale, vertical: 4 * scale),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
+      );
+    }
 
-        // Position badge at top-right of inner circle
-        // The inner circle center is at (size/2, size/2)
-        // Badge should be at roughly 45 degrees, almost touching the inner circle edge
-        final badgeSize = 36.0 * scale;
-        // Position so badge edge is ~2px inside inner circle edge
-        final badgeOffset = innerRadius - (badgeSize / 2) - (2 * scale);
-        final badgeX = size / 2 + badgeOffset * 0.707; // cos(45°)
-        final badgeY = size / 2 - badgeOffset * 0.707; // -sin(45°) for top
+    // Static button when not flashing - no AnimatedBuilder to avoid constant rebuilds
+    if (!shouldFlash) {
+      return buildButton(
+        alertColor,
+        isDark ? Colors.black54 : Colors.white70,
+      );
+    }
 
-        return Stack(
-          children: [
-            Positioned(
-              left: badgeX - badgeSize / 2,
-              top: badgeY - badgeSize / 2,
-              child: GestureDetector(
-                onTap: () {
-                  // Acknowledge all active alerts (stop flashing)
-                  setState(() {
-                    for (final a in _alertService?.activeAlerts ?? []) {
-                      _acknowledgedAlertIds.add(a.id);
-                    }
-                  });
-                },
-                child: AnimatedBuilder(
-                  animation: _alertFlashController,
-                  builder: (context, child) {
-                    // Flash between muted alert color and muted white if unacknowledged
-                    final flashValue = shouldFlash ? _alertFlashController.value : 0.0;
-                    // Muted colors - lower opacity for subtlety
-                    final bgColor = Color.lerp(
-                      alertColor.withValues(alpha: 0.5),
-                      Colors.white.withValues(alpha: 0.6),
-                      flashValue,
-                    )!;
-                    final iconColor = Color.lerp(
-                      Colors.white.withValues(alpha: 0.8),
-                      alertColor.withValues(alpha: 0.8),
-                      flashValue,
-                    )!;
-
-                    return Container(
-                      width: badgeSize,
-                      height: badgeSize,
-                      decoration: BoxDecoration(
-                        color: bgColor,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.5),
-                          width: 1.5 * scale,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            '!',
-                            style: TextStyle(
-                              fontSize: 14 * scale,
-                              fontWeight: FontWeight.bold,
-                              color: iconColor,
-                            ),
-                          ),
-                          SizedBox(width: 1 * scale),
-                          Icon(
-                            _getAlertIcon(alert.severity),
-                            size: 14 * scale,
-                            color: iconColor,
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          ],
+    // Animated button when flashing
+    return AnimatedBuilder(
+      animation: _alertFlashController,
+      builder: (context, child) {
+        final flashValue = _alertFlashController.value;
+        return buildButton(
+          Color.lerp(alertColor, Colors.white, flashValue)!,
+          Color.lerp(
+            isDark ? Colors.black54 : Colors.white70,
+            alertColor.withValues(alpha: 0.3),
+            flashValue,
+          )!,
         );
       },
     );
@@ -595,6 +528,132 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
       case AlertSeverity.unknown:
         return PhosphorIcons.question();
     }
+  }
+
+  /// Build activity score indicators as horizontal row
+  /// Shows all enabled activities in fixed positions, with X overlay only for bad/dangerous scores
+  /// Tap an activity to show detailed score breakdown
+  Widget _buildActivityIndicators() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final storage = context.read<StorageService>();
+    final activityScoreService = context.watch<ActivityScoreService>();
+    final enabledActivityStrings = storage.enabledActivities;
+    final activityScores = activityScoreService.activityScores;
+
+    // Convert string keys to ActivityType objects
+    final enabledActivities = enabledActivityStrings
+        .map((key) => ActivityTypeExtension.fromKey(key))
+        .where((a) => a != null)
+        .cast<ActivityType>()
+        .toList();
+
+    if (enabledActivities.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: enabledActivities.take(5).map((activityType) {
+        // Find the score for this activity (if any)
+        final score = activityScores.cast<ActivityScore?>().firstWhere(
+          (s) => s?.activity == activityType,
+          orElse: () => null,
+        );
+
+        // Get tolerances for this activity
+        final tolerances = activityScoreService.getActivityTolerance(activityType);
+
+        // Determine if we need an X overlay for bad/dangerous levels
+        final isBad = score?.level == ScoreLevel.bad;
+        final isDangerous = score?.level == ScoreLevel.dangerous;
+        final showXOverlay = isBad || isDangerous;
+        final xColor = isDangerous ? Colors.red : Colors.orange;
+
+        // Use score color if available, otherwise neutral gray
+        final bgColor = score?.color ?? (isDark ? Colors.grey.shade700 : Colors.grey.shade400);
+        final tooltipMessage = score != null
+            ? '${activityType.displayName}: ${score.score.toStringAsFixed(0)}% (${score.label})'
+            : '${activityType.displayName}: No data';
+
+        return GestureDetector(
+          onTap: score != null ? () {
+            // Get the forecast time from the service
+            final forecastTime = activityScoreService.currentWeather?.time ?? DateTime.now();
+            // Show the activity score summary sheet
+            ActivityScoreSummarySheet.showAsSheet(
+              context,
+              score: score,
+              tolerances: tolerances,
+              conversions: widget.weatherFlowService.conversions,
+              forecastTime: forecastTime,
+            );
+          } : null,
+          child: Tooltip(
+            message: tooltipMessage,
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 2),
+              width: 24,
+              height: 24,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Activity icon circle
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: bgColor.withValues(alpha: isDark ? 0.9 : 0.85),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: isDark ? Colors.white24 : Colors.black12,
+                        width: 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 2,
+                          offset: const Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      activityType.icon,
+                      size: 14,
+                      color: _getContrastColor(bgColor),
+                    ),
+                  ),
+                  // X overlay centered over the icon
+                  if (showXOverlay)
+                    Positioned(
+                      left: -4,
+                      top: -4,
+                      right: -4,
+                      bottom: -4,
+                      child: Icon(
+                        Icons.close,
+                        size: 32,
+                        color: xColor,
+                        shadows: [
+                          Shadow(
+                            color: Colors.black87,
+                            blurRadius: 3,
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  /// Get contrasting text color for a background color
+  Color _getContrastColor(Color background) {
+    final luminance = background.computeLuminance();
+    return luminance > 0.5 ? Colors.black87 : Colors.white;
   }
 
   Widget _buildRefreshButton() {
@@ -651,6 +710,7 @@ class _WeatherApiSpinnerToolState extends State<WeatherApiSpinnerTool>
       ),
     );
   }
+
 }
 
 /// Refresh status indicator

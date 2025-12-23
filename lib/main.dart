@@ -14,6 +14,11 @@ import 'widgets/tools/wind_tool.dart';
 import 'widgets/tools/weather_api_spinner_tool.dart';
 import 'widgets/tools/weatherflow_forecast_tool.dart';
 import 'widgets/tools/weather_alerts_tool.dart';
+import 'widgets/tools/sun_moon_arc_tool.dart';
+
+// Service imports for activity scoring and solar
+import 'services/activity_score_service.dart';
+import 'services/solar_calculation_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -74,6 +79,21 @@ void main() async {
             return service;
           },
         ),
+
+        // Activity Score Service
+        ChangeNotifierProxyProvider2<StorageService, WeatherFlowService, ActivityScoreService>(
+          create: (context) => ActivityScoreService(),
+          update: (context, storage, weatherFlow, previous) {
+            final service = previous ?? ActivityScoreService();
+            service.initialize(storage, weatherFlow);
+            return service;
+          },
+        ),
+
+        // Solar Calculation Service
+        ChangeNotifierProvider<SolarCalculationService>(
+          create: (context) => SolarCalculationService(),
+        ),
       ],
       child: const WeatherFlowApp(),
     ),
@@ -87,6 +107,7 @@ void _registerTools(ToolRegistry registry) {
   registry.register('weather_api_spinner', WeatherApiSpinnerToolBuilder());
   registry.register('weatherflow_forecast', WeatherFlowForecastToolBuilder());
   registry.register('weather_alerts', WeatherAlertsToolBuilder());
+  registry.register('sun_moon_arc', SunMoonArcToolBuilder());
   // Add more tools here as they are created:
   // registry.register('lightning', LightningToolBuilder());
   // registry.register('rain', RainToolBuilder());

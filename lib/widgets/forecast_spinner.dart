@@ -8,7 +8,19 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:weatherflow_core/weatherflow_core.dart' hide HourlyForecast;
+import '../models/marine_data.dart';
+import '../utils/conversion_extensions.dart';
 import 'forecast_models.dart';
+import '../utils/sun_calc.dart';
+import '../utils/date_time_formatter.dart';
+import '../services/activity_scorer.dart';
+import '../services/daylight_service.dart';
+import '../services/solar_calculation_service.dart';
+import '../models/activity_definition.dart';
+
+/// Center display modes for the forecast spinner
+enum CenterDisplayMode { weather, wind, sea, solar }
 
 /// Circular forecast spinner widget
 class ForecastSpinner extends StatefulWidget {
@@ -29,11 +41,59 @@ class ForecastSpinner extends StatefulWidget {
   /// Provider name to display
   final String? providerName;
 
+  /// Weather model name to display below provider
+  final String? modelName;
+
   /// Callback when selected hour changes
   final void Function(int hourOffset)? onHourChanged;
 
   /// Whether to show animated weather effects
   final bool showWeatherAnimation;
+
+  /// Whether user is right-handed (affects button placement)
+  final bool isRightHanded;
+
+  /// Whether to show the outer date ring
+  final bool showDateRing;
+
+  /// Date ring display mode: 'year' for full year, 'range' for forecast range
+  final String dateRingMode;
+
+  /// Total forecast hours available (for range mode)
+  final int forecastHours;
+
+  /// Whether to show primary icons (sun/moon rise and set)
+  final bool showPrimaryIcons;
+
+  /// Whether to show secondary icons (dusk, dawn, golden hours)
+  final bool showSecondaryIcons;
+
+  /// Alert badge builder - receives scale factor to match Now button sizing
+  final Widget Function(double scale)? alertBadgeBuilder;
+
+  /// Whether to show wind state as a center display option
+  final bool showWindCenter;
+
+  /// Whether to show sea state as a center display option
+  final bool showSeaCenter;
+
+  /// Marine data for sea state display
+  final MarineData? marineData;
+
+  /// Conversion service for unit formatting
+  final ConversionService? conversions;
+
+  /// Activity scores for the current hour
+  final List<ActivityScore>? activityScores;
+
+  /// Whether to show solar state as a center display option
+  final bool showSolarCenter;
+
+  /// Solar panel max wattage (for power calculation in solar center)
+  final double? panelMaxWatts;
+
+  /// System derate factor (0.0-1.0, accounts for inverter, wiring, dirt, temp losses)
+  final double? systemDerate;
 
   const ForecastSpinner({
     super.key,
@@ -44,8 +104,24 @@ class ForecastSpinner extends StatefulWidget {
     this.pressureUnit = 'hPa',
     this.primaryColor = Colors.blue,
     this.providerName,
+    this.modelName,
     this.onHourChanged,
     this.showWeatherAnimation = true,
+    this.isRightHanded = true,
+    this.showDateRing = true,
+    this.dateRingMode = 'range',
+    this.forecastHours = 72,
+    this.showPrimaryIcons = true,
+    this.showSecondaryIcons = true,
+    this.alertBadgeBuilder,
+    this.showWindCenter = true,
+    this.showSeaCenter = true,
+    this.marineData,
+    this.conversions,
+    this.activityScores,
+    this.showSolarCenter = true,
+    this.panelMaxWatts,
+    this.systemDerate,
   });
 
   @override
@@ -53,7 +129,7 @@ class ForecastSpinner extends StatefulWidget {
 }
 
 class _ForecastSpinnerState extends State<ForecastSpinner>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final ValueNotifier<double> _rotationNotifier = ValueNotifier<double>(0.0);
   double _previousAngle = 0.0;
   int _lastSelectedHourOffset = 0;
@@ -61,6 +137,15 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
   Animation<double>? _snapAnimation;
   List<Color>? _cachedSegmentColors;
   DateTime _cachedNow = DateTime.now();
+
+  /// Current center display mode
+  CenterDisplayMode _currentCenterMode = CenterDisplayMode.weather;
+
+  /// Wind animation controller (speed based on wind speed)
+  late AnimationController _windAnimController;
+
+  /// Wave animation controller (speed based on wave period)
+  late AnimationController _waveAnimController;
 
   double get _rotationAngle => _rotationNotifier.value;
   set _rotationAngle(double value) => _rotationNotifier.value = value;
@@ -83,6 +168,19 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
+
+    // Wind animation - default 2 seconds, will be adjusted based on wind speed
+    _windAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat();
+
+    // Wave animation - default 4 seconds, will be adjusted based on wave period
+    _waveAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 4000),
+    )..repeat();
+
     _updateSegmentColors();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -103,6 +201,8 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
   void dispose() {
     _controller.removeListener(_onAnimationTick);
     _controller.dispose();
+    _windAnimController.dispose();
+    _waveAnimController.dispose();
     _rotationNotifier.dispose();
     super.dispose();
   }
@@ -119,64 +219,13 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
   }
 
   /// Compute the color for a segment based on time of day and sun data
+  /// Uses DaylightService for unified, hemisphere-aware calculations
   Color _computeSegmentColor(DateTime time, SunMoonTimes? times) {
-    if (times != null) {
-      final todayStart = DateTime(_cachedNow.year, _cachedNow.month, _cachedNow.day);
-      final dayIndex = time.difference(todayStart).inDays;
-      final dayTimes = times.getDay(dayIndex);
-
-      if (dayTimes != null) {
-        final sunrise = dayTimes.sunrise;
-        final sunset = dayTimes.sunset;
-        final dawn = dayTimes.dawn;
-        final dusk = dayTimes.dusk;
-        final goldenHour = dayTimes.goldenHour;
-        final goldenHourEnd = dayTimes.goldenHourEnd;
-        final nauticalDawn = dayTimes.nauticalDawn;
-        final nauticalDusk = dayTimes.nauticalDusk;
-
-        if (sunrise != null && sunset != null) {
-          final timeMinutes = time.hour * 60 + time.minute;
-          final sunriseLocal = sunrise.toLocal();
-          final sunsetLocal = sunset.toLocal();
-          final sunriseMin = sunriseLocal.hour * 60 + sunriseLocal.minute;
-          final sunsetMin = sunsetLocal.hour * 60 + sunsetLocal.minute;
-          final dawnLocal = dawn?.toLocal();
-          final duskLocal = dusk?.toLocal();
-          final nauticalDawnLocal = nauticalDawn?.toLocal();
-          final nauticalDuskLocal = nauticalDusk?.toLocal();
-          final goldenHourLocal = goldenHour?.toLocal();
-          final goldenHourEndLocal = goldenHourEnd?.toLocal();
-          final dawnMin = dawnLocal != null ? dawnLocal.hour * 60 + dawnLocal.minute : sunriseMin - 30;
-          final duskMin = duskLocal != null ? duskLocal.hour * 60 + duskLocal.minute : sunsetMin + 30;
-          final nauticalDawnMin = nauticalDawnLocal != null ? nauticalDawnLocal.hour * 60 + nauticalDawnLocal.minute : dawnMin - 30;
-          final nauticalDuskMin = nauticalDuskLocal != null ? nauticalDuskLocal.hour * 60 + nauticalDuskLocal.minute : duskMin + 30;
-          final goldenHourEndMin = goldenHourEndLocal != null ? goldenHourEndLocal.hour * 60 + goldenHourEndLocal.minute : sunriseMin + 60;
-          final goldenHourMin = goldenHourLocal != null ? goldenHourLocal.hour * 60 + goldenHourLocal.minute : sunsetMin - 60;
-
-          if (timeMinutes < nauticalDawnMin) return Colors.indigo.shade900;
-          if (timeMinutes >= nauticalDawnMin && timeMinutes < dawnMin) return Colors.indigo.shade700;
-          if (timeMinutes >= dawnMin && timeMinutes < sunriseMin) return Colors.indigo.shade400;
-          if (timeMinutes >= sunriseMin && timeMinutes < goldenHourEndMin) return Colors.orange.shade300;
-          if (timeMinutes >= goldenHourEndMin && timeMinutes < goldenHourMin) return Colors.amber.shade200;
-          if (timeMinutes >= goldenHourMin && timeMinutes < sunsetMin) return Colors.orange.shade300;
-          if (timeMinutes >= sunsetMin && timeMinutes < duskMin) return Colors.deepOrange.shade400;
-          if (timeMinutes >= duskMin && timeMinutes < nauticalDuskMin) return Colors.indigo.shade700;
-          if (timeMinutes >= nauticalDuskMin) return Colors.indigo.shade900;
-        }
-      }
-    }
-
-    // Fallback: use simplified hour-based colors
-    final hour = time.hour;
-    if (hour >= 5 && hour < 6) return Colors.indigo.shade700;
-    if (hour >= 6 && hour < 7) return Colors.indigo.shade400;
-    if (hour >= 7 && hour < 8) return Colors.orange.shade300;
-    if (hour >= 8 && hour < 16) return Colors.amber.shade200;
-    if (hour >= 16 && hour < 17) return Colors.orange.shade400;
-    if (hour >= 17 && hour < 18) return Colors.deepOrange.shade400;
-    if (hour >= 18 && hour < 19) return Colors.indigo.shade700;
-    return Colors.indigo.shade900;
+    return DaylightService.getSegmentColor(
+      time,
+      times,
+      useLocationTimezone: true,
+    );
   }
 
   void _onAnimationTick() {
@@ -193,6 +242,8 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
     if (newOffset != _lastSelectedHourOffset) {
       _lastSelectedHourOffset = newOffset;
       if (mounted) setState(() {});
+      // Notify parent immediately during spin, not just at end
+      widget.onHourChanged?.call(newOffset);
     }
   }
 
@@ -299,53 +350,76 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final size = math.min(constraints.maxWidth, constraints.maxHeight);
+        // Reserve space for label if present
+        final hasLabel = widget.providerName != null || widget.modelName != null;
+        final labelHeight = hasLabel ? 18.0 : 0.0;
+        final availableHeight = constraints.maxHeight - labelHeight;
+        final size = math.min(constraints.maxWidth, availableHeight);
         _currentSize = Size(size, size);
         final scale = (size / 300).clamp(0.5, 1.5);
 
-        return RepaintBoundary(
-          child: SizedBox(
-            width: size,
-            height: size,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // Gesture detector for spinning
-                Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onPanStart: _onPanStart,
-                    onPanUpdate: (details) => _onPanUpdate(details, Size(size, size)),
-                    onPanEnd: _onPanEnd,
-                    child: ValueListenableBuilder<double>(
-                      valueListenable: _rotationNotifier,
-                      builder: (context, rotationAngle, child) {
-                        return CustomPaint(
-                          size: Size(size, size),
-                          painter: _ForecastRimPainter(
-                            times: widget.sunMoonTimes,
-                            rotationAngle: rotationAngle,
-                            isDark: isDark,
-                            selectedHourOffset: _selectedHourOffset,
-                            cachedSegmentColors: _cachedSegmentColors,
-                            cachedNow: _cachedNow,
-                            maxForecastHours: widget.hourlyForecasts.length,
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Label above spinner (left-aligned)
+            if (hasLabel)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 2),
+                  child: Text.rich(
+                  TextSpan(
+                    children: [
+                      if (widget.providerName != null && widget.providerName!.isNotEmpty)
+                        TextSpan(
+                          text: widget.providerName!,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                            color: isDark ? Colors.white60 : Colors.black54,
                           ),
-                        );
-                      },
-                    ),
+                        ),
+                      if (widget.providerName != null && widget.modelName != null)
+                        TextSpan(
+                          text: ' · ',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isDark ? Colors.white38 : Colors.black26,
+                          ),
+                        ),
+                      if (widget.modelName != null && widget.modelName!.isNotEmpty)
+                        TextSpan(
+                          text: widget.modelName!,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w400,
+                            color: widget.primaryColor.withValues(alpha: 0.7),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-
-                // Selection indicator at top
+                ),
+              ),
+            // Spinner
+            RepaintBoundary(
+              child: SizedBox(
+                width: size,
+                height: size,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                // Selection indicator at top - rendered first so it's behind everything
                 Positioned(
-                  top: 0,
+                  top: 20 * scale,
                   child: IgnorePointer(
                     child: Container(
                       width: 20 * scale,
-                      height: 30 * scale,
+                      height: 23 * scale,
                       decoration: BoxDecoration(
-                        color: Colors.red,
+                        color: widget.primaryColor,
                         borderRadius: BorderRadius.only(
                           bottomLeft: Radius.circular(10 * scale),
                           bottomRight: Radius.circular(10 * scale),
@@ -367,16 +441,59 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
                   ),
                 ),
 
-                // Center content
-                IgnorePointer(
-                  ignoring: true,
-                  child: _buildCenterContent(size, isDark),
+                // Gesture detector for spinning
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onPanStart: _onPanStart,
+                    onPanUpdate: (details) => _onPanUpdate(details, Size(size, size)),
+                    onPanEnd: _onPanEnd,
+                    child: ValueListenableBuilder<double>(
+                      valueListenable: _rotationNotifier,
+                      builder: (context, rotationAngle, child) {
+                        return CustomPaint(
+                          size: Size(size, size),
+                          painter: _ForecastRimPainter(
+                            times: widget.sunMoonTimes,
+                            rotationAngle: rotationAngle,
+                            isDark: isDark,
+                            selectedHourOffset: _selectedHourOffset,
+                            cachedSegmentColors: _cachedSegmentColors,
+                            cachedNow: _cachedNow,
+                            maxForecastHours: widget.hourlyForecasts.length,
+                            showPrimaryIcons: widget.showPrimaryIcons,
+                            showSecondaryIcons: widget.showSecondaryIcons,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                 ),
 
-                // Return to Now button
+                // Fixed date ring (doesn't rotate) - shows full year or forecast range
+                if (widget.showDateRing)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        size: Size(size, size),
+                        painter: _DateRingPainter(
+                          selectedDate: DateTime.now().add(Duration(minutes: _selectedMinuteOffset)),
+                          isDark: isDark,
+                          primaryColor: widget.primaryColor,
+                          mode: widget.dateRingMode,
+                          forecastHours: widget.forecastHours,
+                          currentHourOffset: _selectedHourOffset,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // Return to Now button - explicit positioning (no full-width hit area)
                 if (_selectedHourOffset > 0)
                   Positioned(
-                    bottom: size * 0.22,
+                    bottom: -4 * scale,
+                    right: widget.isRightHanded ? 4 * scale : null,
+                    left: widget.isRightHanded ? null : 4 * scale,
                     child: TextButton.icon(
                       onPressed: _returnToNow,
                       icon: Icon(Icons.gps_fixed, size: 14 * scale),
@@ -391,63 +508,950 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
                     ),
                   ),
 
-                // Provider name
-                if (widget.providerName != null && widget.providerName!.isNotEmpty)
+                // Alert badge - mirrored position, explicit positioning (no full-width hit area)
+                if (widget.alertBadgeBuilder != null)
                   Positioned(
-                    top: 4 * scale,
-                    left: 4 * scale,
-                    child: IgnorePointer(
-                      child: Text(
-                        widget.providerName!,
-                        style: TextStyle(
-                          fontSize: 10 * scale,
-                          fontWeight: FontWeight.w500,
-                          color: isDark ? Colors.white54 : Colors.black45,
-                        ),
+                    bottom: -4 * scale,
+                    left: widget.isRightHanded ? 4 * scale : null,
+                    right: widget.isRightHanded ? null : 4 * scale,
+                    child: widget.alertBadgeBuilder!(scale),
+                  ),
+
+                // Center content - on top (tap to cycle center modes)
+                _buildCenterContent(size, isDark),
+
+              ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Build activity score indicators as horizontal row (top right)
+  Widget _buildActivityIndicatorsHorizontal(
+    List<ActivityScore> scores,
+    double scale,
+    bool isDark,
+  ) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: scores.take(5).map((score) {
+        // Determine if we need an X overlay for bad/dangerous levels
+        final isBad = score.level == ScoreLevel.bad;
+        final isDangerous = score.level == ScoreLevel.dangerous;
+        final showXOverlay = isBad || isDangerous;
+        final xColor = isDangerous ? Colors.red : Colors.orange;
+
+        return Tooltip(
+          message: '${score.activity.displayName}: ${score.score.toStringAsFixed(0)}% (${score.label})',
+          child: Container(
+            margin: EdgeInsets.symmetric(horizontal: 2 * scale),
+            width: 22 * scale,
+            height: 22 * scale,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // Activity icon circle
+                Container(
+                  width: 22 * scale,
+                  height: 22 * scale,
+                  decoration: BoxDecoration(
+                    color: score.color.withValues(alpha: isDark ? 0.9 : 0.85),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isDark ? Colors.white24 : Colors.black12,
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black26,
+                        blurRadius: 2 * scale,
+                        offset: Offset(0, 1 * scale),
                       ),
+                    ],
+                  ),
+                  child: Icon(
+                    score.icon,
+                    size: 12 * scale,
+                    color: _getContrastColor(score.color),
+                  ),
+                ),
+                // X overlay centered over the icon
+                if (showXOverlay)
+                  Positioned(
+                    left: -4 * scale,
+                    top: -4 * scale,
+                    right: -4 * scale,
+                    bottom: -4 * scale,
+                    child: Icon(
+                      Icons.close,
+                      size: 30 * scale,
+                      color: xColor,
+                      shadows: [
+                        Shadow(
+                          color: Colors.black87,
+                          blurRadius: 3,
+                        ),
+                      ],
                     ),
                   ),
               ],
             ),
           ),
         );
-      },
+      }).toList(),
     );
+  }
+
+  /// Get contrasting text color for a background color
+  Color _getContrastColor(Color background) {
+    // Calculate luminance and choose white or black
+    final luminance = background.computeLuminance();
+    return luminance > 0.5 ? Colors.black87 : Colors.white;
   }
 
   Widget _buildCenterContent(double size, bool isDark) {
     final scale = (size / 300).clamp(0.5, 1.5);
-    final outerMargin = 27.0 * scale;
+    final outerMargin = 43.0 * scale;
     final outerRadius = size / 2 - outerMargin;
     final innerRadius = outerRadius * 0.72;
     final centerSize = innerRadius * 2;
-    final forecast = _selectedHourOffset < widget.hourlyForecasts.length
-        ? widget.hourlyForecasts[_selectedHourOffset]
-        : null;
 
-    final selectedTime = DateTime.now().add(Duration(minutes: _selectedMinuteOffset));
-    final bgColor = _getTimeOfDayColor(selectedTime);
+    // Calculate device time for daylight color (works with UTC comparison)
+    final deviceTime = DateTime.now().add(Duration(minutes: _selectedMinuteOffset));
+    final bgColor = _getTimeOfDayColor(deviceTime);
+    // Convert to location time for display and forecast matching
+    final selectedTime = widget.sunMoonTimes?.toLocationTime(deviceTime) ?? deviceTime;
 
-    return Container(
-      width: centerSize,
-      height: centerSize,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [
-            bgColor.withValues(alpha: 0.6),
-            bgColor.withValues(alpha: 0.3),
+    // Get forecast for selected hour by matching time (not array index)
+    // API times are in location timezone, so match against selectedTime
+    final HourlyForecast? forecast;
+    if (widget.hourlyForecasts.isEmpty) {
+      forecast = null;
+    } else {
+      forecast = widget.hourlyForecasts.cast<HourlyForecast?>().firstWhere(
+        (f) => f?.time != null &&
+               f!.time!.hour == selectedTime.hour &&
+               f.time!.day == selectedTime.day,
+        orElse: () => null,
+      ) ?? widget.hourlyForecasts.last;
+    }
+    final availableModes = _getAvailableModes();
+
+    // Ensure current mode is valid (e.g., if marine data becomes unavailable)
+    if (!availableModes.contains(_currentCenterMode)) {
+      _currentCenterMode = CenterDisplayMode.weather;
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: availableModes.length > 1 ? _cycleCenterMode : null,
+      child: Container(
+        width: centerSize,
+        height: centerSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [
+              bgColor.withValues(alpha: 0.6),
+              bgColor.withValues(alpha: 0.3),
+            ],
+          ),
+          border: Border.all(
+            color: isDark ? Colors.white24 : Colors.black12,
+            width: 2,
+          ),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Main content based on mode
+            if (forecast == null)
+              const Center(child: Text('No data'))
+            else
+              _buildCenterModeContent(forecast, selectedTime, deviceTime, isDark, centerSize),
+            // Mode indicator dots at bottom
+            if (availableModes.length > 1)
+              Positioned(
+                bottom: centerSize * 0.08,
+                child: _buildModeIndicator(availableModes, isDark),
+              ),
           ],
         ),
-        border: Border.all(
-          color: isDark ? Colors.white24 : Colors.black12,
-          width: 2,
-        ),
       ),
-      child: forecast == null
-          ? const Center(child: Text('No data'))
-          : _buildForecastContent(forecast, selectedTime, isDark, centerSize),
     );
+  }
+
+  /// Build content based on current center display mode
+  /// Falls back to weather mode if selected mode returns null (no data)
+  Widget _buildCenterModeContent(
+    HourlyForecast forecast,
+    DateTime time,
+    DateTime deviceTime,
+    bool isDark,
+    double centerSize,
+  ) {
+    switch (_currentCenterMode) {
+      case CenterDisplayMode.weather:
+        return _buildWeatherCenter(forecast, time, isDark, centerSize);
+      case CenterDisplayMode.wind:
+        return _buildWindStateCenter(forecast, time, isDark, centerSize);
+      case CenterDisplayMode.sea:
+        // Fall back to weather if sea center has no data
+        return _buildSeaStateCenter(time, isDark, centerSize) ??
+            _buildWeatherCenter(forecast, time, isDark, centerSize);
+      case CenterDisplayMode.solar:
+        return _buildSolarCenter(forecast, time, deviceTime, isDark, centerSize);
+    }
+  }
+
+  /// Build mode indicator dots
+  Widget _buildModeIndicator(List<CenterDisplayMode> modes, bool isDark) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: modes.map((mode) {
+        final isActive = mode == _currentCenterMode;
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 3),
+          width: isActive ? 8 : 6,
+          height: isActive ? 8 : 6,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isActive
+                ? (isDark ? Colors.white : Colors.black87)
+                : (isDark ? Colors.white38 : Colors.black26),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  /// Original weather center display (renamed from _buildForecastContent)
+  Widget _buildWeatherCenter(HourlyForecast forecast, DateTime time, bool isDark, double centerSize) {
+    return _buildForecastContent(forecast, time, isDark, centerSize);
+  }
+
+  /// Wind state center display with animation
+  Widget _buildWindStateCenter(HourlyForecast forecast, DateTime time, bool isDark, double centerSize) {
+    final scale = (centerSize / 200).clamp(0.6, 1.2);
+    final windSpeed = forecast.windSpeed ?? 0.0;
+    final windDirection = forecast.windDirection;
+
+    // Use pre-calculated Beaufort scale from forecast data
+    final beaufort = forecast.beaufort ?? 0;
+    final beaufortDesc = _getBeaufortDescription(beaufort);
+
+    // Wind speed is already converted to user's preferred units
+    final formattedSpeed = '${windSpeed.toStringAsFixed(0)} ${widget.windUnit}';
+
+    // Get compass direction
+    final compassDir = windDirection != null
+        ? _getWindDirectionLabel(windDirection)
+        : '--';
+
+    // Adjust wind animation speed based on wind speed (faster wind = faster animation)
+    // At 0 km/h: 4 seconds per cycle, at 100 km/h: 0.5 seconds per cycle
+    final animDuration = (4000 - (windSpeed.clamp(0, 100) * 35)).round().clamp(500, 4000);
+    if (_windAnimController.duration?.inMilliseconds != animDuration) {
+      _windAnimController.duration = Duration(milliseconds: animDuration);
+      if (!_windAnimController.isAnimating) {
+        _windAnimController.repeat();
+      }
+    }
+
+    return Stack(
+      children: [
+        // Wind icons animation layer (matching weather center style)
+        if (windSpeed > 0)
+          Positioned.fill(
+            child: ClipOval(
+              child: AnimatedBuilder(
+                animation: _windAnimController,
+                builder: (context, _) {
+                  return _buildWindParticles(
+                    _windAnimController.value,
+                    windDirection ?? 0,
+                    windSpeed,
+                    beaufort,
+                    centerSize,
+                    isDark,
+                  );
+                },
+              ),
+            ),
+          ),
+
+        // Content overlay
+        Padding(
+          padding: EdgeInsets.all(12 * scale),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Time label (shows only day name when date ring is visible)
+              Text(
+                _formatSelectedTime(time, showDateRing: widget.showDateRing),
+                style: TextStyle(
+                  fontSize: 14 * scale,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                ),
+              ),
+              SizedBox(height: 2 * scale),
+
+              // Beaufort description
+              Text(
+                beaufortDesc.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12 * scale,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                  letterSpacing: 1.2,
+                  shadows: isDark ? null : [
+                    Shadow(color: Colors.white, blurRadius: 2),
+                  ],
+                ),
+              ),
+              SizedBox(height: 2 * scale),
+
+              // Beaufort number
+              Text(
+                'BF $beaufort',
+                style: TextStyle(
+                  fontSize: 22 * scale,
+                  fontWeight: FontWeight.bold,
+                  color: _getBeaufortColor(beaufort),
+                  shadows: [
+                    Shadow(
+                      color: isDark ? Colors.black54 : Colors.white,
+                      blurRadius: 3,
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 8 * scale),
+
+              // Wind speed with direction arrow
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (windDirection != null)
+                    Transform.rotate(
+                      angle: (windDirection + 180) * math.pi / 180,
+                      child: Icon(
+                        Icons.navigation,
+                        size: 24 * scale,
+                        color: Colors.teal.shade300,
+                        shadows: [
+                          Shadow(
+                            color: isDark ? Colors.black54 : Colors.white,
+                            blurRadius: 3,
+                          ),
+                        ],
+                      ),
+                    ),
+                  SizedBox(width: 6 * scale),
+                  Text(
+                    formattedSpeed,
+                    style: TextStyle(
+                      fontSize: 20 * scale,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.teal.shade300,
+                      shadows: [
+                        Shadow(
+                          color: isDark ? Colors.black54 : Colors.white,
+                          blurRadius: 3,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 4 * scale),
+
+              // Compass direction
+              Text(
+                'from $compassDir',
+                style: TextStyle(
+                  fontSize: 14 * scale,
+                  color: isDark ? Colors.white60 : Colors.black45,
+                  shadows: isDark ? null : [
+                    Shadow(color: Colors.white, blurRadius: 2),
+                  ],
+                ),
+              ),
+
+              SizedBox(height: 20 * scale), // Space for dots
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Build wind particle icons (leaves blowing in the wind)
+  Widget _buildWindParticles(
+    double progress,
+    double windDirection,
+    double windSpeed,
+    int beaufort,
+    double size,
+    bool isDark,
+  ) {
+    final center = size / 2;
+    final radius = size / 2;
+
+    // Number of leaves (more for stronger wind)
+    final leafCount = (4 + beaufort.clamp(0, 8)).clamp(4, 12);
+
+    // Wind direction in radians - convert from meteorological (0=N, clockwise)
+    // to canvas coordinates where north is UP
+    final windAngle = (windDirection + 90) * math.pi / 180;
+
+    // Fixed icon size
+    const iconSize = 22.0;
+
+    // Movement speed multiplier based on wind speed
+    final speedMultiplier = 1.0 + (windSpeed.clamp(0, 60) / 30);
+
+    // Oscillation amplitude DECREASES with wind speed (faster = straighter path)
+    final oscillationAmp = radius * (0.12 - beaufort * 0.008).clamp(0.02, 0.12);
+
+    final particles = <Widget>[];
+
+    for (int i = 0; i < leafCount; i++) {
+      // Each leaf has its own phase offset (use golden ratio for better distribution)
+      final delay = (i * 0.618033988749895) % 1.0;
+      final t = (progress * speedMultiplier + delay) % 1.0;
+
+      // Horizontal position: move across the circle
+      final startX = -radius * 0.3;
+      final endX = radius * 1.3;
+      final currentProgress = startX + t * (endX - startX);
+
+      // Vertical position: sine wave oscillation
+      final baseY = (i - leafCount / 2) * (radius * 1.6 / leafCount);
+      final oscillation = math.sin((t + delay) * math.pi * (3 + beaufort * 0.5)) * oscillationAmp;
+      final currentY = baseY + oscillation;
+
+      // Transform position based on wind direction
+      final rotatedX = center + currentProgress * math.cos(windAngle) - currentY * math.sin(windAngle);
+      final rotatedY = center + currentProgress * math.sin(windAngle) + currentY * math.cos(windAngle);
+
+      // Only show if within the circle
+      final distFromCenter = math.sqrt(math.pow(rotatedX - center, 2) + math.pow(rotatedY - center, 2));
+      if (distFromCenter > radius * 0.85) continue;
+
+      // Fade near edges
+      final edgeFade = (1 - distFromCenter / radius).clamp(0.5, 1.0);
+      final alpha = (isDark ? 0.95 : 0.9) * edgeFade;
+
+      // Random-looking rotation based on leaf index and progress
+      // Each leaf tumbles at its own rate, MUCH faster in stronger wind
+      final tumbleSpeed = (1 + beaufort * 1.2) * math.pi;
+      final leafRotation = (t * tumbleSpeed + i * 1.7) + math.sin(t * math.pi * 4 + i) * (0.3 + beaufort * 0.15);
+
+      // Vary leaf colors slightly for natural look - brighter shades
+      final leafColors = [
+        Colors.green.shade300,
+        Colors.green.shade400,
+        Colors.lightGreen.shade300,
+        Colors.teal.shade300,
+      ];
+      final leafColor = leafColors[i % leafColors.length];
+
+      particles.add(
+        Positioned(
+          left: rotatedX - iconSize / 2,
+          top: rotatedY - iconSize / 2,
+          child: Transform.rotate(
+            angle: leafRotation,
+            child: Icon(
+              PhosphorIcons.leaf(),
+              size: iconSize,
+              color: leafColor.withValues(alpha: alpha),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Stack(children: particles);
+  }
+
+  /// Get color for Beaufort scale
+  Color _getBeaufortColor(int bf) {
+    if (bf <= 2) return Colors.green;
+    if (bf <= 4) return Colors.teal;
+    if (bf <= 6) return Colors.orange;
+    if (bf <= 8) return Colors.deepOrange;
+    if (bf <= 10) return Colors.red;
+    return Colors.purple;
+  }
+
+  /// Sea state center display
+  /// Returns null if no marine data available (caller should fall back to weather)
+  Widget? _buildSeaStateCenter(DateTime selectedTime, bool isDark, double centerSize) {
+    final scale = (centerSize / 200).clamp(0.6, 1.2);
+    final marine = widget.marineData;
+
+    // Return null to signal fallback to weather mode
+    if (marine == null || marine.hourly.isEmpty) {
+      return null;
+    }
+
+    // Find marine data for the selected time from hourly list
+    // Match by finding the closest hour (handles timezone differences)
+    HourlyMarine? selectedMarine;
+    int? smallestDiff;
+    for (final h in marine.hourly) {
+      final diff = (h.time.difference(selectedTime).inMinutes).abs();
+      if (diff < 60 && (smallestDiff == null || diff < smallestDiff)) {
+        smallestDiff = diff;
+        selectedMarine = h;
+      }
+    }
+    // Fallback: try matching just by hour of day for today
+    if (selectedMarine == null) {
+      for (final h in marine.hourly) {
+        if (h.time.hour == selectedTime.hour &&
+            h.time.day == selectedTime.day) {
+          selectedMarine = h;
+          break;
+        }
+      }
+    }
+
+    // Return null to signal fallback to weather mode
+    if (selectedMarine == null) {
+      return null;
+    }
+
+    // Get marine conditions from hourly data
+    final waveHeight = selectedMarine.waveHeight ?? 0.0;
+    final wavePeriod = selectedMarine.wavePeriod;
+    final waveDirection = selectedMarine.waveDirection;
+    final swellHeight = selectedMarine.swellWaveHeight;
+    final swellDirection = selectedMarine.swellWaveDirection;
+
+    // Get sea state info - use pre-calculated Douglas scale
+    final seaStateLabel = _getSeaStateLabel(waveHeight);
+    final douglas = selectedMarine.douglas ?? 0;
+
+    // Format wave height using conversions if available
+    final formattedHeight = widget.conversions != null
+        ? widget.conversions!.formatWaveHeight(waveHeight)
+        : '${waveHeight.toStringAsFixed(1)} m';
+
+    // Format swell height
+    final formattedSwell = swellHeight != null && widget.conversions != null
+        ? widget.conversions!.formatWaveHeight(swellHeight)
+        : (swellHeight != null ? '${swellHeight.toStringAsFixed(1)} m' : null);
+
+    // Adjust wave animation speed based on wave period (longer period = slower animation)
+    // Default 6 second period = 4 second animation cycle
+    final periodMs = ((wavePeriod ?? 6) * 667).round().clamp(2000, 8000);
+    if (_waveAnimController.duration?.inMilliseconds != periodMs) {
+      _waveAnimController.duration = Duration(milliseconds: periodMs);
+      if (!_waveAnimController.isAnimating) {
+        _waveAnimController.repeat();
+      }
+    }
+
+    return Stack(
+      children: [
+        // Wave animation layer
+        Positioned.fill(
+          child: ClipOval(
+            child: AnimatedBuilder(
+              animation: _waveAnimController,
+              builder: (context, _) {
+                return CustomPaint(
+                  painter: _WavesPainter(
+                    progress: _waveAnimController.value,
+                    waveHeight: waveHeight,
+                    wavePeriod: wavePeriod,
+                    isDark: isDark,
+                    beaufort: douglas,  // Using Douglas scale for wave animation intensity
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+
+        // Content overlay
+        Padding(
+          padding: EdgeInsets.all(12 * scale),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Time label (shows only day name when date ring is visible)
+              Text(
+                _formatSelectedTime(selectedTime, showDateRing: widget.showDateRing),
+                style: TextStyle(
+                  fontSize: 14 * scale,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                ),
+              ),
+              SizedBox(height: 2 * scale),
+
+              // Sea state label
+              Text(
+                seaStateLabel.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 11 * scale,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                  letterSpacing: 1.0,
+                  shadows: [
+                    Shadow(
+                      color: isDark ? Colors.black54 : Colors.white,
+                      blurRadius: 3,
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 2 * scale),
+
+              // Douglas sea state number
+              Text(
+                'SS $douglas',
+                style: TextStyle(
+                  fontSize: 20 * scale,
+                  fontWeight: FontWeight.bold,
+                  color: _getSeaStateColor(waveHeight),
+                  shadows: [
+                    Shadow(
+                      color: isDark ? Colors.black54 : Colors.white,
+                      blurRadius: 3,
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 6 * scale),
+
+              // Wave height @ period
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    PhosphorIcons.waves(PhosphorIconsStyle.fill),
+                    size: 20 * scale,
+                    color: Colors.blue.shade300,
+                    shadows: [
+                      Shadow(
+                        color: isDark ? Colors.black54 : Colors.white,
+                        blurRadius: 3,
+                      ),
+                    ],
+                  ),
+                  SizedBox(width: 4 * scale),
+                  Text(
+                    formattedHeight,
+                    style: TextStyle(
+                      fontSize: 18 * scale,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.blue.shade300,
+                      shadows: [
+                        Shadow(
+                          color: isDark ? Colors.black54 : Colors.white,
+                          blurRadius: 3,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (wavePeriod != null) ...[
+                    SizedBox(width: 6 * scale),
+                    Text(
+                      '@ ${wavePeriod.toStringAsFixed(0)}s',
+                      style: TextStyle(
+                        fontSize: 14 * scale,
+                        color: Colors.blue.shade200,
+                        shadows: [
+                          Shadow(
+                            color: isDark ? Colors.black54 : Colors.white,
+                            blurRadius: 3,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              SizedBox(height: 4 * scale),
+
+              // Wave direction
+              if (waveDirection != null)
+                Text(
+                  'from ${_getWindDirectionLabel(waveDirection)}',
+                  style: TextStyle(
+                    fontSize: 13 * scale,
+                    color: isDark ? Colors.white60 : Colors.black45,
+                    shadows: [
+                      Shadow(
+                        color: isDark ? Colors.black54 : Colors.white,
+                        blurRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+              SizedBox(height: 4 * scale),
+
+              // Swell info
+              if (formattedSwell != null)
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 8 * scale, vertical: 2 * scale),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Swell: $formattedSwell${swellDirection != null ? ' ${_getWindDirectionLabel(swellDirection)}' : ''}',
+                    style: TextStyle(
+                      fontSize: 11 * scale,
+                      color: Colors.indigo.shade200,
+                    ),
+                  ),
+                ),
+
+              SizedBox(height: 16 * scale), // Space for dots
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Get color for sea state based on wave height
+  Color _getSeaStateColor(double meters) {
+    if (meters < 0.5) return Colors.teal;
+    if (meters < 1.25) return Colors.cyan;
+    if (meters < 2.5) return Colors.blue;
+    if (meters < 4.0) return Colors.indigo;
+    if (meters < 6.0) return Colors.orange;
+    return Colors.red;
+  }
+
+  /// Solar center display - shows hourly solar data for selected hour
+  Widget _buildSolarCenter(HourlyForecast forecast, DateTime time, DateTime deviceTime, bool isDark, double centerSize) {
+    final scale = (centerSize / 200).clamp(0.6, 1.2);
+
+    // Get irradiance - prefer tilted if available
+    final irradiance = forecast.globalTiltedIrradiance ??
+        forecast.shortwaveRadiation ??
+        0.0;
+
+    // Show night display if no irradiance (night hours have 0 irradiance from API)
+    if (irradiance <= 0) {
+      return _buildNightSolarDisplay(time, isDark, centerSize, scale);
+    }
+
+    // Get panel config
+    final maxWatts = widget.panelMaxWatts ?? 0;
+    final derate = widget.systemDerate ?? 0.85;
+    final hasPanelConfig = maxWatts > 0;
+
+    // Get radiation label and color
+    final label = SolarCalculationService.getRadiationLabel(irradiance);
+    final color = SolarCalculationService.getRadiationColor(irradiance);
+
+    // Calculate power output for this hour if panel is configured
+    double? watts;
+    if (hasPanelConfig) {
+      watts = SolarCalculationService.calculateInstantPower(
+        irradiance: irradiance,
+        maxWatts: maxWatts,
+        systemDerate: derate,
+      );
+    }
+
+    return Stack(
+      children: [
+        // Sun rays animation in background
+        if (irradiance > 50)
+          Positioned.fill(
+            child: ClipOval(
+              child: _SunRaysAnimation(
+                intensity: (irradiance / 1000).clamp(0.1, 1.0),
+                isDark: isDark,
+              ),
+            ),
+          ),
+
+        // Content overlay
+        Padding(
+          padding: EdgeInsets.all(12 * scale),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Time label
+              Text(
+                _formatSelectedTime(time, showDateRing: widget.showDateRing),
+                style: TextStyle(
+                  fontSize: 14 * scale,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                ),
+              ),
+              SizedBox(height: 2 * scale),
+
+              // Radiation label
+              Text(
+                label.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12 * scale,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                  letterSpacing: 1.2,
+                  shadows: isDark ? null : [
+                    Shadow(color: Colors.white, blurRadius: 2),
+                  ],
+                ),
+              ),
+              SizedBox(height: 2 * scale),
+
+              // Irradiance value
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.wb_sunny,
+                    size: 20 * scale,
+                    color: color,
+                    shadows: [
+                      Shadow(
+                        color: isDark ? Colors.black54 : Colors.white,
+                        blurRadius: 3,
+                      ),
+                    ],
+                  ),
+                  SizedBox(width: 4 * scale),
+                  Text(
+                    '${irradiance.toStringAsFixed(0)} W/m²',
+                    style: TextStyle(
+                      fontSize: 18 * scale,
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                      shadows: [
+                        Shadow(
+                          color: isDark ? Colors.black54 : Colors.white,
+                          blurRadius: 3,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 8 * scale),
+
+              // Power output (if panel configured)
+              if (hasPanelConfig && watts != null) ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.electric_bolt,
+                      size: 18 * scale,
+                      color: Colors.amber,
+                      shadows: [
+                        Shadow(
+                          color: isDark ? Colors.black54 : Colors.white,
+                          blurRadius: 3,
+                        ),
+                      ],
+                    ),
+                    SizedBox(width: 4 * scale),
+                    Text(
+                      _formatWatts(watts),
+                      style: TextStyle(
+                        fontSize: 20 * scale,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.amber,
+                        shadows: [
+                          Shadow(
+                            color: isDark ? Colors.black54 : Colors.white,
+                            blurRadius: 3,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ] else if (!hasPanelConfig) ...[
+                // No panel configured message
+                Text(
+                  'No panel configured',
+                  style: TextStyle(
+                    fontSize: 12 * scale,
+                    color: isDark ? Colors.white38 : Colors.black26,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+
+              SizedBox(height: 20 * scale), // Space for dots
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Build night-time solar display
+  Widget _buildNightSolarDisplay(DateTime selectedTime, bool isDark, double centerSize, double scale) {
+    return Padding(
+      padding: EdgeInsets.all(12 * scale),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            _formatSelectedTime(selectedTime, showDateRing: widget.showDateRing),
+            style: TextStyle(
+              fontSize: 14 * scale,
+              fontWeight: FontWeight.bold,
+              color: isDark ? Colors.white70 : Colors.black54,
+            ),
+          ),
+          SizedBox(height: 8 * scale),
+          Icon(
+            Icons.nightlight_round,
+            size: 32 * scale,
+            color: Colors.indigo.shade300,
+          ),
+          SizedBox(height: 8 * scale),
+          Text(
+            'NIGHT',
+            style: TextStyle(
+              fontSize: 14 * scale,
+              fontWeight: FontWeight.bold,
+              color: Colors.indigo.shade300,
+              letterSpacing: 1.2,
+            ),
+          ),
+          SizedBox(height: 4 * scale),
+          Text(
+            'No solar output',
+            style: TextStyle(
+              fontSize: 12 * scale,
+              color: isDark ? Colors.white38 : Colors.black26,
+            ),
+          ),
+          SizedBox(height: 20 * scale),
+        ],
+      ),
+    );
+  }
+
+  String _formatWatts(double watts) {
+    if (watts < 1) return '0W';
+    if (watts >= 1000) {
+      return '${(watts / 1000).toStringAsFixed(1)}kW';
+    }
+    return '${watts.toStringAsFixed(0)}W';
   }
 
   Widget _buildForecastContent(HourlyForecast forecast, DateTime time, bool isDark, double centerSize) {
@@ -490,9 +1494,9 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Time label
+              // Time label (shows only day name when date ring is visible)
               Text(
-                _formatSelectedTime(time),
+                _formatSelectedTime(time, showDateRing: widget.showDateRing),
                 style: TextStyle(
                   fontSize: 14 * scale,
                   fontWeight: FontWeight.bold,
@@ -667,12 +1671,32 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
     return (type: WeatherEffectType.none, intensity: 0.0);
   }
 
-  String _formatSelectedTime(DateTime time) {
-    final now = DateTime.now();
-    final isToday = time.day == now.day && time.month == now.month && time.year == now.year;
-    final tomorrow = now.add(const Duration(days: 1));
-    final isTomorrow = time.day == tomorrow.day && time.month == tomorrow.month && time.year == tomorrow.year;
+  /// Format selected time for display
+  /// When showDateRing is true, only show day name (date/time is on the ring)
+  /// When showDateRing is false, show full date and time
+  /// Note: time parameter should already be in location time
+  String _formatSelectedTime(DateTime time, {bool showDateRing = false}) {
+    // Get location's "now" for Today/Tomorrow comparison
+    final deviceNow = DateTime.now();
+    final locationNow = widget.sunMoonTimes?.toLocationTime(deviceNow) ?? deviceNow;
 
+    final isToday = time.day == locationNow.day && time.month == locationNow.month && time.year == locationNow.year;
+    final locationTomorrow = locationNow.add(const Duration(days: 1));
+    final isTomorrow = time.day == locationTomorrow.day && time.month == locationTomorrow.month && time.year == locationTomorrow.year;
+
+    // When date ring is shown, only display day name (time is on the ring)
+    if (showDateRing) {
+      if (isToday) {
+        return 'Today';
+      } else if (isTomorrow) {
+        return 'Tomorrow';
+      } else {
+        final dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        return dayNames[time.weekday - 1];
+      }
+    }
+
+    // Full date and time when date ring is not shown
     final hour = time.hour;
     final minute = time.minute;
     final minuteStr = minute.toString().padLeft(2, '0');
@@ -691,66 +1715,12 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
   }
 
   Color _getTimeOfDayColor(DateTime time) {
-    // Use actual sun times if available - matches _computeSegmentColor logic
-    final times = widget.sunMoonTimes;
-    if (times != null && times.days.isNotEmpty) {
-      final now = DateTime.now();
-      final todayStart = DateTime(now.year, now.month, now.day);
-      final dayIndex = time.difference(todayStart).inDays;
-      final dayTimes = times.getDay(dayIndex);
-
-      if (dayTimes != null) {
-        final sunrise = dayTimes.sunrise;
-        final sunset = dayTimes.sunset;
-        final dawn = dayTimes.dawn;
-        final dusk = dayTimes.dusk;
-        final goldenHour = dayTimes.goldenHour;
-        final goldenHourEnd = dayTimes.goldenHourEnd;
-        final nauticalDawn = dayTimes.nauticalDawn;
-        final nauticalDusk = dayTimes.nauticalDusk;
-
-        if (sunrise != null && sunset != null) {
-          final timeMinutes = time.hour * 60 + time.minute;
-          final sunriseLocal = sunrise.toLocal();
-          final sunsetLocal = sunset.toLocal();
-          final sunriseMin = sunriseLocal.hour * 60 + sunriseLocal.minute;
-          final sunsetMin = sunsetLocal.hour * 60 + sunsetLocal.minute;
-          final dawnLocal = dawn?.toLocal();
-          final duskLocal = dusk?.toLocal();
-          final nauticalDawnLocal = nauticalDawn?.toLocal();
-          final nauticalDuskLocal = nauticalDusk?.toLocal();
-          final goldenHourLocal = goldenHour?.toLocal();
-          final goldenHourEndLocal = goldenHourEnd?.toLocal();
-          final dawnMin = dawnLocal != null ? dawnLocal.hour * 60 + dawnLocal.minute : sunriseMin - 30;
-          final duskMin = duskLocal != null ? duskLocal.hour * 60 + duskLocal.minute : sunsetMin + 30;
-          final nauticalDawnMin = nauticalDawnLocal != null ? nauticalDawnLocal.hour * 60 + nauticalDawnLocal.minute : dawnMin - 30;
-          final nauticalDuskMin = nauticalDuskLocal != null ? nauticalDuskLocal.hour * 60 + nauticalDuskLocal.minute : duskMin + 30;
-          final goldenHourEndMin = goldenHourEndLocal != null ? goldenHourEndLocal.hour * 60 + goldenHourEndLocal.minute : sunriseMin + 60;
-          final goldenHourMin = goldenHourLocal != null ? goldenHourLocal.hour * 60 + goldenHourLocal.minute : sunsetMin - 60;
-
-          if (timeMinutes < nauticalDawnMin) return Colors.indigo.shade900;
-          if (timeMinutes >= nauticalDawnMin && timeMinutes < dawnMin) return Colors.indigo.shade700;
-          if (timeMinutes >= dawnMin && timeMinutes < sunriseMin) return Colors.indigo.shade400;
-          if (timeMinutes >= sunriseMin && timeMinutes < goldenHourEndMin) return Colors.orange.shade300;
-          if (timeMinutes >= goldenHourEndMin && timeMinutes < goldenHourMin) return Colors.amber.shade200;
-          if (timeMinutes >= goldenHourMin && timeMinutes < sunsetMin) return Colors.orange.shade300;
-          if (timeMinutes >= sunsetMin && timeMinutes < duskMin) return Colors.deepOrange.shade400;
-          if (timeMinutes >= duskMin && timeMinutes < nauticalDuskMin) return Colors.indigo.shade700;
-          if (timeMinutes >= nauticalDuskMin) return Colors.indigo.shade900;
-        }
-      }
-    }
-
-    // Fallback: simplified hour-based colors - matches _computeSegmentColor fallback
-    final hour = time.hour;
-    if (hour >= 5 && hour < 6) return Colors.indigo.shade700;
-    if (hour >= 6 && hour < 7) return Colors.indigo.shade400;
-    if (hour >= 7 && hour < 8) return Colors.orange.shade300;
-    if (hour >= 8 && hour < 16) return Colors.amber.shade200;
-    if (hour >= 16 && hour < 17) return Colors.orange.shade400;
-    if (hour >= 17 && hour < 18) return Colors.deepOrange.shade400;
-    if (hour >= 18 && hour < 19) return Colors.indigo.shade700;
-    return Colors.indigo.shade900;
+    // Use DaylightService for unified, hemisphere-aware calculations
+    return DaylightService.getSegmentColor(
+      time,
+      widget.sunMoonTimes,
+      useLocationTimezone: true,
+    );
   }
 
   String _getWindDirectionLabel(double degrees) {
@@ -758,6 +1728,70 @@ class _ForecastSpinnerState extends State<ForecastSpinner>
                         'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
     final index = ((degrees + 11.25) % 360 / 22.5).floor();
     return directions[index];
+  }
+
+  // ============ Center Mode Helpers ============
+
+  /// Get list of available center display modes based on config and data
+  List<CenterDisplayMode> _getAvailableModes() {
+    final modes = <CenterDisplayMode>[CenterDisplayMode.weather];
+    if (widget.showWindCenter) {
+      modes.add(CenterDisplayMode.wind);
+    }
+    if (widget.showSeaCenter && widget.marineData != null) {
+      modes.add(CenterDisplayMode.sea);
+    }
+    if (widget.showSolarCenter) {
+      modes.add(CenterDisplayMode.solar);
+    }
+    return modes;
+  }
+
+  /// Cycle to next available center display mode
+  void _cycleCenterMode() {
+    final modes = _getAvailableModes();
+    if (modes.length <= 1) return;
+
+    final currentIndex = modes.indexOf(_currentCenterMode);
+    final nextIndex = (currentIndex + 1) % modes.length;
+    setState(() {
+      _currentCenterMode = modes[nextIndex];
+    });
+  }
+
+  // ============ Beaufort/Douglas Scale Helpers ============
+
+  /// Get Beaufort description from scale number (0-12)
+  String _getBeaufortDescription(int bf) {
+    const descriptions = [
+      'Calm',
+      'Light air',
+      'Light breeze',
+      'Gentle breeze',
+      'Moderate breeze',
+      'Fresh breeze',
+      'Strong breeze',
+      'Near gale',
+      'Gale',
+      'Strong gale',
+      'Storm',
+      'Violent storm',
+      'Hurricane',
+    ];
+    return descriptions[bf.clamp(0, 12)];
+  }
+
+  /// Get sea state label from wave height in meters
+  String _getSeaStateLabel(double meters) {
+    if (meters < 0.1) return 'Calm (glassy)';
+    if (meters < 0.5) return 'Calm (rippled)';
+    if (meters < 1.25) return 'Smooth';
+    if (meters < 2.5) return 'Slight';
+    if (meters < 4.0) return 'Moderate';
+    if (meters < 6.0) return 'Rough';
+    if (meters < 9.0) return 'Very rough';
+    if (meters < 14.0) return 'High';
+    return 'Phenomenal';
   }
 
   Color _getWeatherIconColor(String? iconCode) {
@@ -784,6 +1818,8 @@ class _ForecastRimPainter extends CustomPainter {
   final List<Color>? cachedSegmentColors;
   final DateTime cachedNow;
   final int maxForecastHours;
+  final bool showPrimaryIcons;
+  final bool showSecondaryIcons;
 
   _ForecastRimPainter({
     required this.times,
@@ -793,6 +1829,8 @@ class _ForecastRimPainter extends CustomPainter {
     this.cachedSegmentColors,
     required this.cachedNow,
     required this.maxForecastHours,
+    this.showPrimaryIcons = true,
+    this.showSecondaryIcons = true,
   });
 
   @override
@@ -810,7 +1848,7 @@ class _ForecastRimPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final scale = (size.width / 300).clamp(0.5, 1.5);
 
-    final outerMargin = 27.0 * scale;
+    final outerMargin = 43.0 * scale;
     final outerRadius = size.width / 2 - outerMargin;
     final innerRadius = outerRadius * 0.72;
     final rimWidth = outerRadius - innerRadius;
@@ -886,12 +1924,15 @@ class _ForecastRimPainter extends CustomPainter {
       canvas.drawLine(innerPoint, outerPoint, tickPaint);
     }
 
-    // Draw hour labels
+    // Draw hour labels (in location time, not device time)
     final textStyle = TextStyle(
       fontSize: 9 * scale,
       color: isDark ? Colors.white70 : Colors.black54,
       fontWeight: FontWeight.w500,
     );
+
+    // Convert cachedNow to location time
+    final locationNow = times?.toLocationTime(cachedNow) ?? cachedNow;
 
     for (int i = 0; i < 24; i += 6) {
       final angle = -math.pi / 2 + (i * math.pi / 12);
@@ -903,13 +1944,13 @@ class _ForecastRimPainter extends CustomPainter {
 
       String labelText;
       if (i == 0) {
-        final hour = cachedNow.hour;
-        final minute = cachedNow.minute;
+        final hour = locationNow.hour;
+        final minute = locationNow.minute;
         final ampm = hour < 12 ? 'AM' : 'PM';
         final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
         labelText = '$displayHour:${minute.toString().padLeft(2, '0')} $ampm';
       } else {
-        final futureTime = cachedNow.add(Duration(hours: i));
+        final futureTime = locationNow.add(Duration(hours: i));
         final hour = futureTime.hour;
         final ampm = hour < 12 ? 'AM' : 'PM';
         final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
@@ -966,17 +2007,6 @@ class _ForecastRimPainter extends CustomPainter {
       if (hoursFromNow < -2 || hoursFromNow > maxForecastHours) return null;
 
       return -math.pi / 2 + (hoursFromNow * math.pi / 12);
-    }
-
-    String formatTime(DateTime time) {
-      final local = time.toLocal();
-      final hour = local.hour;
-      final minute = local.minute;
-      final minuteStr = minute.toString().padLeft(2, '0');
-      if (hour == 0) return '12:$minuteStr AM';
-      if (hour < 12) return '$hour:$minuteStr AM';
-      if (hour == 12) return '12:$minuteStr PM';
-      return '${hour - 12}:$minuteStr PM';
     }
 
     // Draw sun icon (circle with rays)
@@ -1042,7 +2072,7 @@ class _ForecastRimPainter extends CustomPainter {
         center.dy + labelRadius * math.sin(angle),
       );
 
-      final timeText = formatTime(eventTime);
+      final timeText = DateTimeFormatter.formatTime(times!.toLocationTime(eventTime));
       final textSpan = TextSpan(
         text: timeText,
         style: TextStyle(
@@ -1065,15 +2095,17 @@ class _ForecastRimPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // Draw moon icon with phase
+    // Draw moon icon with phase calculated dynamically for the event time
     void drawMoonIcon(Offset iconCenter, double angle, DateTime eventTime, bool isRise) {
       canvas.save();
       canvas.translate(iconCenter.dx, iconCenter.dy);
       canvas.rotate(-rotationAngle);
 
       final moonRadius = iconSize / 2 - 1 * scale;
-      var phase = times!.moonPhase ?? 0.5;
-      var fraction = times!.moonFraction ?? 0.5;
+      // Calculate moon illumination for the specific event time
+      final moonIllum = MoonCalc.getIllumination(eventTime);
+      var phase = moonIllum.phase;
+      var fraction = moonIllum.fraction;
       if (!phase.isFinite) phase = 0.5;
       if (!fraction.isFinite) fraction = 0.5;
       fraction = fraction.clamp(0.0, 1.0);
@@ -1090,10 +2122,14 @@ class _ForecastRimPainter extends CustomPainter {
         ..style = PaintingStyle.fill;
 
       if (fraction > 0.01 && fraction < 0.99) {
-        final bool isWaxing = phase < 0.5;
+        // In Southern Hemisphere, moon appears flipped left-to-right
+        final bool isNorthernHemisphere = !(times?.isSouthernHemisphere ?? false);
+        final bool isWaxing = isNorthernHemisphere ? (phase < 0.5) : (phase >= 0.5);
         final termWidth = moonRadius * (2.0 * fraction - 1.0);
         final isGibbous = fraction > 0.5;
-        final ellipseX = termWidth.abs().clamp(0.1, moonRadius - 0.1);
+        // Ensure minimum visible crescent width (at least 20% of radius)
+        final minVisibleWidth = moonRadius * 0.20;
+        final ellipseX = termWidth.abs().clamp(minVisibleWidth, moonRadius - 0.1);
 
         if (!ellipseX.isFinite || !moonRadius.isFinite) {
           canvas.drawArc(
@@ -1116,24 +2152,34 @@ class _ForecastRimPainter extends CustomPainter {
           }
           path.close();
           canvas.drawPath(path, lightPaint);
+
+          // Add subtle glow around illuminated edge for visibility
+          final glowPaint = Paint()
+            ..color = Colors.grey.shade400.withValues(alpha: 0.4)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5 * scale;
+          canvas.drawPath(path, glowPaint);
         }
       } else if (fraction >= 0.99) {
         canvas.drawCircle(Offset.zero, moonRadius, lightPaint);
       }
 
-      // Draw arrow indicator
+      // Draw arrow indicator OUTSIDE the moon circle
       final arrowPaint = Paint()
         ..color = isRise ? Colors.cyan.shade300 : Colors.blueGrey.shade400
-        ..strokeWidth = 3 * scale
+        ..strokeWidth = 2.5 * scale
         ..style = PaintingStyle.stroke;
+      final arrowOffset = moonRadius + 4 * scale; // Position arrow outside moon
       if (isRise) {
-        canvas.drawLine(Offset(0, 5 * scale), Offset(0, -7 * scale), arrowPaint);
-        canvas.drawLine(Offset(-5 * scale, 0), Offset(0, -7 * scale), arrowPaint);
-        canvas.drawLine(Offset(5 * scale, 0), Offset(0, -7 * scale), arrowPaint);
+        // Arrow pointing up, positioned below the moon
+        canvas.drawLine(Offset(0, arrowOffset + 5 * scale), Offset(0, arrowOffset - 3 * scale), arrowPaint);
+        canvas.drawLine(Offset(-4 * scale, arrowOffset + 1 * scale), Offset(0, arrowOffset - 3 * scale), arrowPaint);
+        canvas.drawLine(Offset(4 * scale, arrowOffset + 1 * scale), Offset(0, arrowOffset - 3 * scale), arrowPaint);
       } else {
-        canvas.drawLine(Offset(0, -5 * scale), Offset(0, 7 * scale), arrowPaint);
-        canvas.drawLine(Offset(-5 * scale, 0), Offset(0, 7 * scale), arrowPaint);
-        canvas.drawLine(Offset(5 * scale, 0), Offset(0, 7 * scale), arrowPaint);
+        // Arrow pointing down, positioned above the moon
+        canvas.drawLine(Offset(0, -arrowOffset - 5 * scale), Offset(0, -arrowOffset + 3 * scale), arrowPaint);
+        canvas.drawLine(Offset(-4 * scale, -arrowOffset - 1 * scale), Offset(0, -arrowOffset + 3 * scale), arrowPaint);
+        canvas.drawLine(Offset(4 * scale, -arrowOffset - 1 * scale), Offset(0, -arrowOffset + 3 * scale), arrowPaint);
       }
 
       canvas.restore();
@@ -1145,7 +2191,7 @@ class _ForecastRimPainter extends CustomPainter {
         center.dy + labelRadius * math.sin(angle),
       );
 
-      final timeText = formatTime(eventTime);
+      final timeText = DateTimeFormatter.formatTime(times!.toLocationTime(eventTime));
       final textSpan = TextSpan(
         text: timeText,
         style: TextStyle(
@@ -1312,28 +2358,31 @@ class _ForecastRimPainter extends CustomPainter {
     for (int dayIndex = 0; dayIndex < times!.days.length; dayIndex++) {
       final dayTimes = times!.days[dayIndex];
 
-      // Nautical Dawn
-      if (dayTimes.nauticalDawn != null) {
-        final angle = getAngleForTime(dayTimes.nauticalDawn);
-        if (angle != null) {
-          final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
-                             center.dy + secondaryIconRadius * math.sin(angle));
-          drawTwilightIcon(pos, angle, dayTimes.nauticalDawn!, true, true);
+      // Secondary icons (dusk, dawn, golden hours, etc.)
+      if (showSecondaryIcons) {
+        // Nautical Dawn
+        if (dayTimes.nauticalDawn != null) {
+          final angle = getAngleForTime(dayTimes.nauticalDawn);
+          if (angle != null) {
+            final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
+                               center.dy + secondaryIconRadius * math.sin(angle));
+            drawTwilightIcon(pos, angle, dayTimes.nauticalDawn!, true, true);
+          }
         }
-      }
 
-      // Dawn (civil twilight)
-      if (dayTimes.dawn != null) {
-        final angle = getAngleForTime(dayTimes.dawn);
-        if (angle != null) {
-          final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
-                             center.dy + secondaryIconRadius * math.sin(angle));
-          drawTwilightIcon(pos, angle, dayTimes.dawn!, true, false);
+        // Dawn (civil twilight)
+        if (dayTimes.dawn != null) {
+          final angle = getAngleForTime(dayTimes.dawn);
+          if (angle != null) {
+            final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
+                               center.dy + secondaryIconRadius * math.sin(angle));
+            drawTwilightIcon(pos, angle, dayTimes.dawn!, true, false);
+          }
         }
       }
 
       // Sunrise - primary, on rim
-      if (dayTimes.sunrise != null) {
+      if (showPrimaryIcons && dayTimes.sunrise != null) {
         final angle = getAngleForTime(dayTimes.sunrise);
         if (angle != null) {
           final pos = Offset(center.dx + iconRadius * math.cos(angle),
@@ -1342,38 +2391,40 @@ class _ForecastRimPainter extends CustomPainter {
         }
       }
 
-      // Golden Hour End (morning)
-      if (dayTimes.goldenHourEnd != null) {
-        final angle = getAngleForTime(dayTimes.goldenHourEnd);
-        if (angle != null) {
-          final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
-                             center.dy + secondaryIconRadius * math.sin(angle));
-          drawGoldenHourIcon(pos, angle, dayTimes.goldenHourEnd!, true);
+      if (showSecondaryIcons) {
+        // Golden Hour End (morning)
+        if (dayTimes.goldenHourEnd != null) {
+          final angle = getAngleForTime(dayTimes.goldenHourEnd);
+          if (angle != null) {
+            final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
+                               center.dy + secondaryIconRadius * math.sin(angle));
+            drawGoldenHourIcon(pos, angle, dayTimes.goldenHourEnd!, true);
+          }
         }
-      }
 
-      // Solar Noon
-      if (dayTimes.solarNoon != null) {
-        final angle = getAngleForTime(dayTimes.solarNoon);
-        if (angle != null) {
-          final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
-                             center.dy + secondaryIconRadius * math.sin(angle));
-          drawSolarNoonIcon(pos, angle, dayTimes.solarNoon!);
+        // Solar Noon
+        if (dayTimes.solarNoon != null) {
+          final angle = getAngleForTime(dayTimes.solarNoon);
+          if (angle != null) {
+            final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
+                               center.dy + secondaryIconRadius * math.sin(angle));
+            drawSolarNoonIcon(pos, angle, dayTimes.solarNoon!);
+          }
         }
-      }
 
-      // Golden Hour (evening)
-      if (dayTimes.goldenHour != null) {
-        final angle = getAngleForTime(dayTimes.goldenHour);
-        if (angle != null) {
-          final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
-                             center.dy + secondaryIconRadius * math.sin(angle));
-          drawGoldenHourIcon(pos, angle, dayTimes.goldenHour!, false);
+        // Golden Hour (evening)
+        if (dayTimes.goldenHour != null) {
+          final angle = getAngleForTime(dayTimes.goldenHour);
+          if (angle != null) {
+            final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
+                               center.dy + secondaryIconRadius * math.sin(angle));
+            drawGoldenHourIcon(pos, angle, dayTimes.goldenHour!, false);
+          }
         }
       }
 
       // Sunset - primary, on rim
-      if (dayTimes.sunset != null) {
+      if (showPrimaryIcons && dayTimes.sunset != null) {
         final angle = getAngleForTime(dayTimes.sunset);
         if (angle != null) {
           final pos = Offset(center.dx + iconRadius * math.cos(angle),
@@ -1382,28 +2433,30 @@ class _ForecastRimPainter extends CustomPainter {
         }
       }
 
-      // Dusk (civil twilight)
-      if (dayTimes.dusk != null) {
-        final angle = getAngleForTime(dayTimes.dusk);
-        if (angle != null) {
-          final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
-                             center.dy + secondaryIconRadius * math.sin(angle));
-          drawTwilightIcon(pos, angle, dayTimes.dusk!, false, false);
+      if (showSecondaryIcons) {
+        // Dusk (civil twilight)
+        if (dayTimes.dusk != null) {
+          final angle = getAngleForTime(dayTimes.dusk);
+          if (angle != null) {
+            final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
+                               center.dy + secondaryIconRadius * math.sin(angle));
+            drawTwilightIcon(pos, angle, dayTimes.dusk!, false, false);
+          }
         }
-      }
 
-      // Nautical Dusk
-      if (dayTimes.nauticalDusk != null) {
-        final angle = getAngleForTime(dayTimes.nauticalDusk);
-        if (angle != null) {
-          final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
-                             center.dy + secondaryIconRadius * math.sin(angle));
-          drawTwilightIcon(pos, angle, dayTimes.nauticalDusk!, false, true);
+        // Nautical Dusk
+        if (dayTimes.nauticalDusk != null) {
+          final angle = getAngleForTime(dayTimes.nauticalDusk);
+          if (angle != null) {
+            final pos = Offset(center.dx + secondaryIconRadius * math.cos(angle),
+                               center.dy + secondaryIconRadius * math.sin(angle));
+            drawTwilightIcon(pos, angle, dayTimes.nauticalDusk!, false, true);
+          }
         }
       }
 
       // Moonrise - primary, on rim
-      if (dayTimes.moonrise != null) {
+      if (showPrimaryIcons && dayTimes.moonrise != null) {
         final angle = getAngleForTime(dayTimes.moonrise);
         if (angle != null) {
           final pos = Offset(center.dx + iconRadius * math.cos(angle),
@@ -1413,7 +2466,7 @@ class _ForecastRimPainter extends CustomPainter {
       }
 
       // Moonset - primary, on rim
-      if (dayTimes.moonset != null) {
+      if (showPrimaryIcons && dayTimes.moonset != null) {
         final angle = getAngleForTime(dayTimes.moonset);
         if (angle != null) {
           final pos = Offset(center.dx + iconRadius * math.cos(angle),
@@ -1867,5 +2920,604 @@ class _LightningBoltPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _LightningBoltPainter oldDelegate) {
     return oldDelegate.seed != seed || oldDelegate.startX != startX;
+  }
+}
+
+/// Fixed date ring painter showing either full year or forecast range
+/// January 1 is at the top (12 o'clock position) in year mode
+/// Current hour is at top in range mode
+class _DateRingPainter extends CustomPainter {
+  final DateTime selectedDate;
+  final bool isDark;
+  final Color primaryColor;
+  final String mode; // 'year' or 'range'
+  final int forecastHours;
+  final int currentHourOffset;
+
+  _DateRingPainter({
+    required this.selectedDate,
+    required this.isDark,
+    required this.primaryColor,
+    this.mode = 'range',
+    this.forecastHours = 72,
+    this.currentHourOffset = 0,
+  });
+
+  /// Get complementary/opposite color
+  Color get _oppositeColor {
+    // Calculate complementary color (opposite on color wheel)
+    final hsl = HSLColor.fromColor(primaryColor);
+    final complementaryHue = (hsl.hue + 180) % 360;
+    return HSLColor.fromAHSL(1.0, complementaryHue, hsl.saturation.clamp(0.5, 1.0), hsl.lightness.clamp(0.3, 0.7)).toColor();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (mode == 'range') {
+      _paintRangeMode(canvas, size);
+    } else {
+      _paintYearMode(canvas, size);
+    }
+  }
+
+  /// Paint the year mode - full 365/366 days with month labels
+  void _paintYearMode(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final scale = (size.width / 300).clamp(0.5, 1.5);
+
+    // Date ring with margin for 3-letter month labels
+    final ringRadius = size.width / 2 - 16 * scale;
+    final ringWidth = 8 * scale;
+
+    // Calculate days in current year
+    final year = selectedDate.year;
+    final isLeapYear = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    final daysInYear = isLeapYear ? 366 : 365;
+
+    // Calculate day of year for selected date (1-365/366)
+    final startOfYear = DateTime(year, 1, 1);
+    final dayOfYear = selectedDate.difference(startOfYear).inDays + 1;
+
+    // Draw background ring
+    final bgPaint = Paint()
+      ..color = isDark ? Colors.grey.shade900 : Colors.grey.shade200
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = ringWidth;
+    canvas.drawCircle(center, ringRadius, bgPaint);
+
+    // Draw tick marks for each day
+    final tickPaint = Paint()
+      ..color = isDark ? Colors.grey.shade700 : Colors.grey.shade400
+      ..strokeWidth = 0.5 * scale;
+
+    for (int day = 1; day <= daysInYear; day++) {
+      // Angle: Jan 1 at top (-π/2), going clockwise
+      final angle = -math.pi / 2 + (day - 1) * 2 * math.pi / daysInYear;
+
+      // Tick length varies: longer for first of month
+      final dayDate = startOfYear.add(Duration(days: day - 1));
+      final isFirstOfMonth = dayDate.day == 1;
+      final tickLength = isFirstOfMonth ? 6 * scale : 2 * scale;
+
+      final innerRadius = ringRadius - ringWidth / 2;
+      final outerRadius = ringRadius - ringWidth / 2 + tickLength;
+
+      final x1 = center.dx + innerRadius * math.cos(angle);
+      final y1 = center.dy + innerRadius * math.sin(angle);
+      final x2 = center.dx + outerRadius * math.cos(angle);
+      final y2 = center.dy + outerRadius * math.sin(angle);
+
+      // First of month gets thicker tick
+      if (isFirstOfMonth) {
+        tickPaint.strokeWidth = 1.5 * scale;
+        tickPaint.color = isDark ? Colors.grey.shade500 : Colors.grey.shade600;
+      } else {
+        tickPaint.strokeWidth = 0.5 * scale;
+        tickPaint.color = isDark ? Colors.grey.shade700 : Colors.grey.shade400;
+      }
+
+      canvas.drawLine(Offset(x1, y1), Offset(x2, y2), tickPaint);
+    }
+
+    // Draw month labels
+    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final monthStarts = [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335];
+    if (isLeapYear) {
+      for (int i = 2; i < monthStarts.length; i++) {
+        monthStarts[i]++;
+      }
+    }
+
+    for (int m = 0; m < 12; m++) {
+      final midDay = monthStarts[m] + 14; // Middle of month approximately
+      final angle = -math.pi / 2 + (midDay - 1) * 2 * math.pi / daysInYear;
+      final labelRadius = ringRadius + 10 * scale;
+
+      final x = center.dx + labelRadius * math.cos(angle);
+      final y = center.dy + labelRadius * math.sin(angle);
+
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: months[m],
+          style: TextStyle(
+            fontSize: 8 * scale,
+            color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.translate(-textPainter.width / 2, -textPainter.height / 2);
+      textPainter.paint(canvas, Offset.zero);
+      canvas.restore();
+    }
+
+    // Highlight selected date with a chevron marker pointing inward
+    final selectedAngle = -math.pi / 2 + (dayOfYear - 1) * 2 * math.pi / daysInYear;
+    final markerColor = _oppositeColor;
+
+    // Draw chevron pointing toward center
+    final chevronOuterRadius = ringRadius + 6 * scale;
+    final chevronInnerRadius = ringRadius - 2 * scale;
+    final chevronWidth = 8 * scale;
+
+    final chevronPaint = Paint()
+      ..color = markerColor
+      ..style = PaintingStyle.fill;
+
+    // Calculate chevron points
+    final tipX = center.dx + chevronInnerRadius * math.cos(selectedAngle);
+    final tipY = center.dy + chevronInnerRadius * math.sin(selectedAngle);
+
+    // Perpendicular angle for chevron wings
+    final perpAngle = selectedAngle + math.pi / 2;
+    final wingOffset = chevronWidth / 2;
+
+    final leftWingX = center.dx + chevronOuterRadius * math.cos(selectedAngle) - wingOffset * math.cos(perpAngle);
+    final leftWingY = center.dy + chevronOuterRadius * math.sin(selectedAngle) - wingOffset * math.sin(perpAngle);
+    final rightWingX = center.dx + chevronOuterRadius * math.cos(selectedAngle) + wingOffset * math.cos(perpAngle);
+    final rightWingY = center.dy + chevronOuterRadius * math.sin(selectedAngle) + wingOffset * math.sin(perpAngle);
+
+    final chevronPath = Path()
+      ..moveTo(tipX, tipY)
+      ..lineTo(leftWingX, leftWingY)
+      ..lineTo(rightWingX, rightWingY)
+      ..close();
+
+    canvas.drawPath(chevronPath, chevronPaint);
+
+    // Draw date label near the marker
+    final dateLabel = '${selectedDate.month}/${selectedDate.day}';
+    final datePainter = TextPainter(
+      text: TextSpan(
+        text: dateLabel,
+        style: TextStyle(
+          fontSize: 9 * scale,
+          color: markerColor,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    datePainter.layout();
+
+    // Position label inside the ring
+    final labelRadius2 = ringRadius - ringWidth - 8 * scale;
+    final labelX = center.dx + labelRadius2 * math.cos(selectedAngle) - datePainter.width / 2;
+    final labelY = center.dy + labelRadius2 * math.sin(selectedAngle) - datePainter.height / 2;
+    datePainter.paint(canvas, Offset(labelX, labelY));
+  }
+
+  /// Paint the range mode - forecast hours with hourly ticks and date labels
+  void _paintRangeMode(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final scale = (size.width / 300).clamp(0.5, 1.5);
+
+    // Date ring with margin for date labels
+    final ringRadius = size.width / 2 - 16 * scale;
+    final ringWidth = 8 * scale;
+
+    // Calculate the start time (now) for the forecast
+    final now = DateTime.now();
+    final forecastStart = DateTime(now.year, now.month, now.day, now.hour);
+
+    // Draw background ring
+    final bgPaint = Paint()
+      ..color = isDark ? Colors.grey.shade900 : Colors.grey.shade200
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = ringWidth;
+    canvas.drawCircle(center, ringRadius, bgPaint);
+
+    // Draw tick marks for each hour
+    final tickPaint = Paint()
+      ..color = isDark ? Colors.grey.shade700 : Colors.grey.shade400
+      ..strokeWidth = 0.5 * scale;
+
+    // Track midnight positions for date labels
+    final List<int> midnightHours = [];
+
+    for (int hour = 0; hour < forecastHours; hour++) {
+      // Angle: hour 0 at top (-π/2), going clockwise
+      final angle = -math.pi / 2 + hour * 2 * math.pi / forecastHours;
+
+      final hourTime = forecastStart.add(Duration(hours: hour));
+      final isMidnight = hourTime.hour == 0;
+      final isSixHour = hourTime.hour % 6 == 0;
+
+      if (isMidnight && hour > 0) {
+        midnightHours.add(hour);
+      }
+
+      // Tick length: midnight 6px, 6-hour 4px, regular 2px
+      double tickLength;
+      if (isMidnight) {
+        tickLength = 6 * scale;
+        tickPaint.strokeWidth = 1.5 * scale;
+        tickPaint.color = isDark ? Colors.grey.shade400 : Colors.grey.shade700;
+      } else if (isSixHour) {
+        tickLength = 4 * scale;
+        tickPaint.strokeWidth = 1.0 * scale;
+        tickPaint.color = isDark ? Colors.grey.shade500 : Colors.grey.shade600;
+      } else {
+        tickLength = 2 * scale;
+        tickPaint.strokeWidth = 0.5 * scale;
+        tickPaint.color = isDark ? Colors.grey.shade700 : Colors.grey.shade400;
+      }
+
+      final innerRadius = ringRadius - ringWidth / 2;
+      final outerRadius = ringRadius - ringWidth / 2 + tickLength;
+
+      final x1 = center.dx + innerRadius * math.cos(angle);
+      final y1 = center.dy + innerRadius * math.sin(angle);
+      final x2 = center.dx + outerRadius * math.cos(angle);
+      final y2 = center.dy + outerRadius * math.sin(angle);
+
+      canvas.drawLine(Offset(x1, y1), Offset(x2, y2), tickPaint);
+    }
+
+    // Draw date labels at midnight positions
+    final forecastDays = (forecastHours / 24).ceil();
+    final skipLabels = forecastDays > 7; // Skip labels for long forecasts
+
+    for (final midnightHour in midnightHours) {
+      // Skip every other label for 7+ day forecasts
+      if (skipLabels && midnightHours.indexOf(midnightHour) % 2 == 1) continue;
+
+      final angle = -math.pi / 2 + midnightHour * 2 * math.pi / forecastHours;
+      final labelRadius = ringRadius + 10 * scale;
+
+      final hourTime = forecastStart.add(Duration(hours: midnightHour));
+      final dateLabel = '${hourTime.month}/${hourTime.day}';
+
+      final x = center.dx + labelRadius * math.cos(angle);
+      final y = center.dy + labelRadius * math.sin(angle);
+
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: dateLabel,
+          style: TextStyle(
+            fontSize: 8 * scale,
+            color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.translate(-textPainter.width / 2, -textPainter.height / 2);
+      textPainter.paint(canvas, Offset.zero);
+      canvas.restore();
+    }
+
+    // Highlight current hour position with a chevron marker
+    final selectedAngle = -math.pi / 2 + currentHourOffset * 2 * math.pi / forecastHours;
+    final markerColor = _oppositeColor;
+
+    // Draw chevron pointing toward center
+    final chevronOuterRadius = ringRadius + 6 * scale;
+    final chevronInnerRadius = ringRadius - 2 * scale;
+    final chevronWidth = 8 * scale;
+
+    final chevronPaint = Paint()
+      ..color = markerColor
+      ..style = PaintingStyle.fill;
+
+    // Calculate chevron points
+    final tipX = center.dx + chevronInnerRadius * math.cos(selectedAngle);
+    final tipY = center.dy + chevronInnerRadius * math.sin(selectedAngle);
+
+    // Perpendicular angle for chevron wings
+    final perpAngle = selectedAngle + math.pi / 2;
+    final wingOffset = chevronWidth / 2;
+
+    final leftWingX = center.dx + chevronOuterRadius * math.cos(selectedAngle) - wingOffset * math.cos(perpAngle);
+    final leftWingY = center.dy + chevronOuterRadius * math.sin(selectedAngle) - wingOffset * math.sin(perpAngle);
+    final rightWingX = center.dx + chevronOuterRadius * math.cos(selectedAngle) + wingOffset * math.cos(perpAngle);
+    final rightWingY = center.dy + chevronOuterRadius * math.sin(selectedAngle) + wingOffset * math.sin(perpAngle);
+
+    final chevronPath = Path()
+      ..moveTo(tipX, tipY)
+      ..lineTo(leftWingX, leftWingY)
+      ..lineTo(rightWingX, rightWingY)
+      ..close();
+
+    canvas.drawPath(chevronPath, chevronPaint);
+
+    // Draw time label near the marker (showing hour:00)
+    final timeLabel = '${selectedDate.hour}:00';
+    final timePainter = TextPainter(
+      text: TextSpan(
+        text: timeLabel,
+        style: TextStyle(
+          fontSize: 9 * scale,
+          color: markerColor,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    timePainter.layout();
+
+    // Position label inside the ring
+    final labelRadius2 = ringRadius - ringWidth - 8 * scale;
+    final labelX = center.dx + labelRadius2 * math.cos(selectedAngle) - timePainter.width / 2;
+    final labelY = center.dy + labelRadius2 * math.sin(selectedAngle) - timePainter.height / 2;
+    timePainter.paint(canvas, Offset(labelX, labelY));
+  }
+
+  @override
+  bool shouldRepaint(covariant _DateRingPainter oldDelegate) {
+    return oldDelegate.selectedDate != selectedDate ||
+           oldDelegate.isDark != isDark ||
+           oldDelegate.primaryColor != primaryColor ||
+           oldDelegate.mode != mode ||
+           oldDelegate.forecastHours != forecastHours ||
+           oldDelegate.currentHourOffset != currentHourOffset;
+  }
+}
+
+/// Custom painter for wave animation in sea state center
+class _WavesPainter extends CustomPainter {
+  final double progress;
+  final double waveHeight;
+  final double? wavePeriod;
+  final bool isDark;
+  final int beaufort;
+
+  _WavesPainter({
+    required this.progress,
+    required this.waveHeight,
+    this.wavePeriod,
+    required this.isDark,
+    required this.beaufort,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+
+    // Clip to circle
+    canvas.save();
+    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: radius * 0.95)));
+
+    // Wave parameters based on wave height and period
+    final amplitude = (8 + waveHeight * 6).clamp(8.0, 35.0);
+    final waveCount = ((wavePeriod ?? 6) / 2.5).clamp(2.0, 5.0);
+
+    // Draw multiple wave layers for depth effect
+    for (int layer = 2; layer >= 0; layer--) {
+      final layerOffset = layer * 0.2;
+      final layerAlpha = 0.12 + (2 - layer) * 0.06;
+      final layerAmplitude = amplitude * (1 - layer * 0.15);
+      final baseY = center.dy + radius * 0.15 + layer * 12;
+
+      final paint = Paint()
+        ..color = Colors.blue.shade400.withValues(alpha: layerAlpha)
+        ..style = PaintingStyle.fill;
+
+      final path = Path();
+
+      // Start from left bottom
+      path.moveTo(center.dx - radius, center.dy + radius);
+      path.lineTo(center.dx - radius, baseY);
+
+      // Draw wave curve
+      final steps = 60;
+      for (int i = 0; i <= steps; i++) {
+        final x = center.dx - radius + (i / steps) * radius * 2;
+        final wavePhase = (progress + layerOffset) * 2 * math.pi;
+        final y = baseY + math.sin((i / steps) * waveCount * 2 * math.pi + wavePhase) * layerAmplitude;
+        path.lineTo(x, y);
+      }
+
+      // Close path at bottom right
+      path.lineTo(center.dx + radius, center.dy + radius);
+      path.close();
+
+      canvas.drawPath(path, paint);
+
+      // Draw white foam/highlights on wave crests for top layer only
+      if (layer == 0) {
+        final foamPaint = Paint()
+          ..color = Colors.white.withValues(alpha: 0.25)
+          ..strokeWidth = 2.5
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round;
+
+        final foamPath = Path();
+        bool started = false;
+
+        for (int i = 0; i <= steps; i++) {
+          final x = center.dx - radius * 0.9 + (i / steps) * radius * 1.8;
+          final wavePhase = progress * 2 * math.pi;
+          final y = baseY + math.sin((i / steps) * waveCount * 2 * math.pi + wavePhase) * layerAmplitude;
+
+          // Only draw at wave peaks (where derivative is near zero and going down)
+          final derivative = math.cos((i / steps) * waveCount * 2 * math.pi + wavePhase);
+          if (derivative.abs() < 0.4 && math.sin((i / steps) * waveCount * 2 * math.pi + wavePhase) > 0.3) {
+            if (!started) {
+              foamPath.moveTo(x, y);
+              started = true;
+            } else {
+              foamPath.lineTo(x, y);
+            }
+          } else {
+            started = false;
+          }
+        }
+
+        canvas.drawPath(foamPath, foamPaint);
+      }
+    }
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _WavesPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+           oldDelegate.waveHeight != waveHeight ||
+           oldDelegate.wavePeriod != wavePeriod ||
+           oldDelegate.isDark != isDark ||
+           oldDelegate.beaufort != beaufort;
+  }
+}
+
+/// Animated sun rays effect for solar center display
+class _SunRaysAnimation extends StatefulWidget {
+  final double intensity; // 0.0-1.0 affects opacity and ray count
+  final bool isDark;
+
+  const _SunRaysAnimation({
+    required this.intensity,
+    required this.isDark,
+  });
+
+  @override
+  State<_SunRaysAnimation> createState() => _SunRaysAnimationState();
+}
+
+class _SunRaysAnimationState extends State<_SunRaysAnimation>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(seconds: 20),
+      vsync: this,
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return CustomPaint(
+          painter: _SunRaysPainter(
+            progress: _controller.value,
+            intensity: widget.intensity,
+            isDark: widget.isDark,
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Custom painter for animated sun rays
+class _SunRaysPainter extends CustomPainter {
+  final double progress;
+  final double intensity;
+  final bool isDark;
+
+  _SunRaysPainter({
+    required this.progress,
+    required this.intensity,
+    required this.isDark,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final maxRadius = math.max(size.width, size.height);
+
+    // Number of rays based on intensity
+    final rayCount = (8 + (intensity * 8)).round();
+    final baseAngle = progress * 2 * math.pi;
+
+    // Draw rays
+    for (int i = 0; i < rayCount; i++) {
+      final angle = baseAngle + (i * 2 * math.pi / rayCount);
+
+      // Vary ray properties
+      final rayIntensity = 0.5 + 0.5 * math.sin(progress * 4 * math.pi + i);
+      final rayLength = maxRadius * (0.3 + 0.3 * rayIntensity);
+      final rayWidth = math.pi / 60 * (1 + rayIntensity);
+
+      final rayPaint = Paint()
+        ..shader = RadialGradient(
+          center: Alignment.center,
+          radius: 1.0,
+          colors: [
+            Colors.orange.withValues(alpha: intensity * 0.15 * rayIntensity),
+            Colors.amber.withValues(alpha: intensity * 0.08 * rayIntensity),
+            Colors.transparent,
+          ],
+          stops: const [0.0, 0.5, 1.0],
+        ).createShader(Rect.fromCircle(center: center, radius: rayLength))
+        ..style = PaintingStyle.fill;
+
+      // Draw ray as a narrow arc/wedge
+      final path = Path()
+        ..moveTo(center.dx, center.dy)
+        ..arcTo(
+          Rect.fromCircle(center: center, radius: rayLength),
+          angle - rayWidth / 2,
+          rayWidth,
+          false,
+        )
+        ..close();
+
+      canvas.drawPath(path, rayPaint);
+    }
+
+    // Draw central glow
+    final glowPaint = Paint()
+      ..shader = RadialGradient(
+        center: Alignment.center,
+        radius: 0.5,
+        colors: [
+          Colors.amber.withValues(alpha: intensity * 0.2),
+          Colors.orange.withValues(alpha: intensity * 0.1),
+          Colors.transparent,
+        ],
+        stops: const [0.0, 0.4, 1.0],
+      ).createShader(Rect.fromCircle(center: center, radius: maxRadius * 0.5));
+
+    canvas.drawCircle(center, maxRadius * 0.3, glowPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SunRaysPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+           oldDelegate.intensity != intensity ||
+           oldDelegate.isDark != isDark;
   }
 }
